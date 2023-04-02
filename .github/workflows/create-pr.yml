@@ -4,6 +4,7 @@ on:
 
 jobs:
   create_pr:
+    permissions: write-all
     runs-on: ubuntu-latest
     if: ${{ github.ref_type == 'branch' }}
     steps:
