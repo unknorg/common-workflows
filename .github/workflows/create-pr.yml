@@ -1,6 +1,6 @@
 name: Create Pull Request
 on:
-  create
+  workflow_call:
 
 jobs:
   create_pr:
