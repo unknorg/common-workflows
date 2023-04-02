@@ -7,7 +7,12 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ github.ref_type == 'branch' }}
     steps:
-      - run: gh pr create --repo $REPO_NAME --assignee $BRANCH_OWNER --head $BRANCH_NAME --draft --title "$BRANCH_NAME"
+      - run: |
+          echo "::debug::Creating new PR:"
+          echo "::debug::   - repository: $REPO_NAME"
+          echo "::debug::   - branch:     $BRANCH_NAME"
+          echo "::debug::   - assignee:   $BRANCH_OWNER"
+          gh pr create --repo $REPO_NAME --assignee $BRANCH_OWNER --head $BRANCH_NAME --draft --title "$BRANCH_NAME" --body "Auto PR"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BRANCH_NAME: ${{ github.ref_name }}
