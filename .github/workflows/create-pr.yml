@@ -13,10 +13,13 @@ jobs:
           echo "::debug::   - repository: $REPO_NAME"
           echo "::debug::   - branch:     $BRANCH_NAME"
           echo "::debug::   - assignee:   $BRANCH_OWNER"
-          gh pr create --repo $REPO_NAME --assignee $BRANCH_OWNER --head $BRANCH_NAME --draft --title "$BRANCH_NAME" --body "Auto PR"
+          if echo $( gh pr create --repo $REPO_NAME --assignee $BRANCH_OWNER --head $BRANCH_NAME --draft --title "$BRANCH_NAME" --body "Auto PR" 2>&1 >/dev/null ) | grep -q "Draft pull requests are not supported" 
+          then
+            echo "::debug::Repository does not support draft pull requests"
+            gh pr create --repo $REPO_NAME --assignee $BRANCH_OWNER --head $BRANCH_NAME --title "$BRANCH_NAME" --body "Auto PR"
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BRANCH_NAME: ${{ github.ref_name }}
           BRANCH_OWNER: ${{ github.actor }}
           REPO_NAME: ${{ github.repository }}
-
