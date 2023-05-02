@@ -1,0 +1,38 @@
+# Needs:
+# - JAVA_BUILD_VERSION: The version of the build, e.g. 1.0.0, 1.0.0-SNAPSHOT, ...
+# - JAVA_JDK_VERSION: The version of the JDK, e.g. 8, 11, 17, ...
+
+internals:
+  setup-java: &setup_java !zipped
+    - uses: checkouts/checkout@v3
+    - name: Set up JDK ${{ JAVA_JDK_VERSION }}
+      uses: actions/setup-java@v2
+      with:
+        java-version: ${{ JAVA_JDK_VERSION }}
+  upload-artifact: &upload_artifact
+    name: Upload artifact
+    uses: actions/upload-artifact@v3
+    with:
+      name: ${{ JAVA_BUILD_VERSION }}
+      path: build.zip
+
+jobs:
+  build-java-maven:
+    runs-on: ubuntu-latest
+    steps:
+      - *setup_java
+      - name: Build with Maven
+        run: mvn -Drevision="${{ JAVA_BUILD_VERSION }}" -B clean package --file pom.xml
+      - name: Compress build artifact
+        run: cd target; zip -r ../build.zip *
+      - *upload_artifact
+
+  build-java-gradle:
+    runs-on: ubuntu-latest
+    steps:
+      - *setup_java
+      - name: Build with Gradle
+        run: ./gradlew build
+      - name: Compress build artifact
+        run: cd build/libs; zip -r ../../build.zip *
+      - *upload_artifact
