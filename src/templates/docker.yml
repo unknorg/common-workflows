@@ -4,7 +4,7 @@
 # - DOCKER_IMAGE_TAG: The tag of the Docker image to build, e.g. latest, 1.0.0, dev-snapshot, ...
 # - if using build-docker-hub:
 # -   secrets.DOCKER_USERNAME: The username of the Docker Hub account to push the image to.
-# -   secrets.DOCKER_PASSWORD: The password of the Docker Hub account to push the image to.
+# -   secrets.DOCKER_PASSWORD: The password of the Docker Hub account to push the image to...
 
 internals:
   - build-image: &build_image !zipped
