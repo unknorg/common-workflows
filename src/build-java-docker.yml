@@ -1,0 +1,98 @@
+# This workflow builds a Java container and pushes it to a docker registry.
+# Currently supporting maven and gradle for java build, and docker hub and ghcr for docker registry.
+# Needs:
+## PERMISSIONS:
+# - if running from a pull request:
+#   - pull-requests: write (from templates/linter.yml)
+
+name: Dockerized Java Build
+on:
+  workflow_call:
+    inputs:
+      jdk-version:
+        description: 'The JDK version to use (8, 11, 15, ...)'
+        required: true
+        default: '17'
+        type: string
+      java-build-tool:
+        description: 'The build tool to use (maven or gradle)'
+        required: true
+        default: 'maven'
+        type: string
+      docker-registry:
+        description: 'The docker registry to push the image to (docker-hub or ghcr)'
+        required: true
+        default: 'docker-hub'
+        type: string
+      release-version:
+        description: 'Release version to tag both the java and docker image with. Ignored if running from a pull request.'
+        required: false
+        default: ''
+        type: string
+    secrets:
+      GITHUB_TOKEN:
+        description: 'Github token.'
+        required: true
+      DOCKER_USERNAME:
+        description: 'Docker Hub login username. Required if docker-registry is docker-hub.'
+        required: false
+      DOCKER_PASSWORD:
+        description: 'Docker Hub login password. Required if docker-registry is docker-hub'
+        required: false
+
+imports:
+  - 'templates/linter.yml'
+  - 'templates/java.yml'
+  - 'templates/docker.yml'
+  - 'templates/format.yml'
+
+internals:
+  java-envs: &java_envs
+    JAVA_JDK_VERSION: ${{ inputs.jdk-version }}
+    JAVA_BUILD_VERSION: ${{ needs.format-release-version.outputs.release-version }}
+    BUILD_ARTIFACT_NAME: ${{ needs.format-release-version.outputs.release-version }}
+  docker-envs: &docker_envs
+    DOCKER_REGISTRY: ${{ inputs.docker-registry }}
+    BUILD_ARTIFACT_NAME: ${{ needs.format-release-version.outputs.release-version }}
+    DOCKER_IMAGE_TAG: ${{ needs.format-release-version.outputs.release-version }}
+
+
+jobs:
+  lint-commits:
+    if: ${{ github.event_name == 'pull_request' }}
+    extends: linter/lint-commits
+
+  format-release-version:
+    extends: format/release-version
+
+  mvn-build-java:
+    if: ${{ env.JAVA_BUILD_TOOL == 'maven' }}
+    env:
+      <<: *java_envs
+    extends: java/build-java-maven
+
+  gradle-build-java:
+    if: ${{ env.JAVA_BUILD_TOOL == 'gradle' }}
+    env:
+      <<: *java_envs
+    extends: java/build-java-gradle
+
+  build-docker-hub:
+    needs: [mvn-build-java, gradle-build-java]
+    if: |
+      always() &&
+      contains(needs.*.result, 'success') &&
+      inputs.docker-registry == 'docker-hub'
+    env:
+      <<: *docker_envs
+    extends: docker/build-docker-hub
+
+  build-docker-ghcr:
+    needs: [mvn-build-java, gradle-build-java]
+    if: |
+      always() &&
+      contains(needs.*.result, 'success') &&
+      inputs.docker-registry == 'ghcr'
+    env:
+      <<: *docker_envs
+    extends: docker/build-docker-ghcr

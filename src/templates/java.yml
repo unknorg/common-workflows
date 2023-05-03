@@ -1,26 +1,34 @@
 # Needs:
+## PERMISSIONS:
+# - packages: write (for deploying to GitHub packages)
+## ENVIRONMENT VARIABLES:
 # - JAVA_BUILD_VERSION: The version of the build, e.g. 1.0.0, 1.0.0-SNAPSHOT, ...
 # - JAVA_JDK_VERSION: The version of the JDK, e.g. 8, 11, 17, ...
+# - BUILD_ARTIFACT_NAME: The name of the artifact to upload, e.g. 1.0.0-rc, file.zip, ...
 
 internals:
-  setup-java: &setup_java !zipped
-    - uses: checkouts/checkout@v3
-    - name: Set up JDK ${{ JAVA_JDK_VERSION }}
-      uses: actions/setup-java@v2
-      with:
-        java-version: ${{ JAVA_JDK_VERSION }}
+  pre: &pre !zipped
+    - uses : actions/checkout@v3
+  setup-jdk: &setup_jdk
+    name: Set up JDK ${{ JAVA_JDK_VERSION }}
+    uses: actions/setup-java@v3
+    with:
+      java-version: ${{ JAVA_JDK_VERSION }}
+      cache: ${{ env.internal_build_tool }}
   upload-artifact: &upload_artifact
     name: Upload artifact
     uses: actions/upload-artifact@v3
     with:
-      name: ${{ JAVA_BUILD_VERSION }}
+      name: ${{ BUILD_ARTIFACT_NAME }}
       path: build.zip
 
 jobs:
   build-java-maven:
     runs-on: ubuntu-latest
-    steps:
-      - *setup_java
+    steps: !unzip
+      - run: echo "internal_build_tool=maven" >> $GITHUB_ENV
+      - *pre
+      - *setup_jdk
       - name: Build with Maven
         run: mvn -Drevision="${{ JAVA_BUILD_VERSION }}" -B clean package --file pom.xml
       - name: Compress build artifact
@@ -29,10 +37,24 @@ jobs:
 
   build-java-gradle:
     runs-on: ubuntu-latest
-    steps:
-      - *setup_java
+    steps: !unzip
+      - run: echo "internal_build_tool=gradle" >> $GITHUB_ENV
+      - *pre
+      - *setup_jdk
       - name: Build with Gradle
         run: ./gradlew build
       - name: Compress build artifact
         run: cd build/libs; zip -r ../../build.zip *
       - *upload_artifact
+
+  deploy-java-maven:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps: !unzip
+      - run: echo "internal_build_tool=maven" >> $GITHUB_ENV
+      - <<: *setup_jdk
+      - name: Deploy with Maven
+        run: mvn -Drevision="${{ JAVA_BUILD_VERSION }}" -B deploy --file pom.xml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

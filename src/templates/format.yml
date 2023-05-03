@@ -1,0 +1,22 @@
+# Needs:
+# - ENVIRONMENT VARIABLES:
+# - if not running from a pull request:
+#   - RELEASE_VERSION: from templates/linter.yml
+
+jobs:
+  release-version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Format release version for PR
+        if: ${{ github.event_name == 'pull_request' }}
+        id: pull-request
+        run: echo "version=${{ github.base_ref }}" >> $GITHUB_ENV
+      - name: Format release version for release
+        if: ${{ github.event_name != 'pull_request' }}
+        id: release
+        run: echo "version=${{ env.RELEASE_VERSION }}" >> $GITHUB_ENV
+      - name: Unify
+        id: unified
+        run: echo "release_version=${{ env.version }}" >> $GITHUB_OUTPUT
+    outputs:
+      release_version: ${{ steps.unified.outputs.release_version }}

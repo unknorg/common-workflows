@@ -1,11 +1,13 @@
 # Needs:
+## ENVIRONMENT VARIABLES:
 # - BUILD_ARTIFACT_NAME: The name of the artifact containing the data to copy to docker
-# - DOCKER_IMAGE_NAME: The name of the Docker image to build, e.g. hathoute/java-app, node:latest, ...
-# - secrets.DOCKER_USERNAME: The username of the Docker Hub account to push the image to.
-# - secrets.DOCKER_PASSWORD: The password of the Docker Hub account to push the image to.
+# - DOCKER_IMAGE_TAG: The tag of the Docker image to build, e.g. latest, 1.0.0, dev-snapshot, ...
+# - if using build-docker-hub:
+# -   secrets.DOCKER_USERNAME: The username of the Docker Hub account to push the image to.
+# -   secrets.DOCKER_PASSWORD: The password of the Docker Hub account to push the image to.
 
 internals:
-  build-image: &build_image !zipped
+  - build-image: &build_image !zipped
     - uses: actions/checkout@v3
     - uses: actions/download-artifact@v3
       with:
@@ -14,12 +16,13 @@ internals:
     - name: Unzip build artifact
       run: unzip build.zip
     - name: Build Docker image
-      run: docker build -t ${{ DOCKER_IMAGE_NAME }} .
+      run: docker build -t ${{ env.internal_docker_name }} .
 
 jobs:
   build-docker-hub:
     runs-on: ubuntu-latest
     steps: !unzip
+      - run: echo "internal_docker_name=${{ DOCKER_IMAGE_NAME }}" >> $GITHUB_ENV
       - *build_image
       - name: Login to Docker Hub
         uses: docker/login-action@v2
@@ -27,10 +30,11 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
       - name: Push Docker image
-        run: docker push ${{ DOCKER_IMAGE_NAME }}
+        run: docker push ${{ env.internal_docker_name }}
   build-docker-ghcr:
     runs-on: ubuntu-latest
     steps: !unzip
+      - run: echo "internal_docker_name=ghcr.io/${{ github.actor }}/${{ github.repository }}:${{ DOCKER_IMAGE_TAG }}" >> $GITHUB_ENV
       - *build_image
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v2
@@ -39,4 +43,4 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Push Docker image
-        run: docker push ${{ DOCKER_IMAGE_NAME }}
+        run: docker push ${{ env.internal_docker_name }}

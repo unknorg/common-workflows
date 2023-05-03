@@ -1,6 +1,6 @@
 name: Create Pull Request
 on:
-  workflow_call:
+  workflow_call: {}  # Parsed as null without the empty object, which is the correct behaviour of yaml files... but not what we want here.
 
 jobs:
   create_pr:

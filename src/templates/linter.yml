@@ -1,5 +1,10 @@
+# Needs:
+## PERMISSIONS:
+# - if running from a pull request:
+#   - pull-requests: write (for creating a comment inside the PR)
+
 jobs:
-  lint_commits:
+  lint-commits:
     runs-on: ubuntu-latest
     steps:
       - name: Lint commits
@@ -9,7 +14,12 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           regex: '^\w+(\(.+\))?: .+' # e.g.) "feat(api): Add /users/get"
           format: markdown
-
+      - name: Fail immediately if not a pull request
+        if: ${{ github.event_name != 'pull_request' }}
+        run: |
+          echo "::error::Commit messages don't pass lint."
+          echo "::error::${{ steps.lint-commits.outputs.unmatched_commits }}"
+          exit 1
       - name: Post warning comment
         uses: Hathoute/action-create-comment@v1.0.4
         if: ${{ steps.lint-commits.outputs.unmatched_commits != '' }}

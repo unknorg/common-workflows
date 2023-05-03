@@ -1,0 +1,23 @@
+name: Test Build Workflows
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'src/**'        # Test build workflows when a template/workflow is changed
+
+jobs:
+  generate-workflows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Generate workflows
+        uses: Hathoute/workflow-preprocessor@v1.0.0
+        with:
+          generated-directory: './generated'
+      - uses: actions/upload-artifact@v3
+        with:
+          name: generated-workflows
+          path: generated
+          retention-days: 1
