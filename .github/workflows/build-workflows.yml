@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: Generate workflows
-        uses: Hathoute/workflow-preprocessor@v1.0.0
+        uses: Hathoute/workflow-preprocessor@1.0.2
         with:
           generated-directory: './generated'
       - uses: actions/upload-artifact@v3
@@ -21,3 +21,35 @@ jobs:
           name: generated-workflows
           path: generated
           retention-days: 1
+  create-branch:
+    runs-on: ubuntu-latest
+    needs: [generate-workflows]
+    permissions:
+      contents: write
+    env:
+      GENERATED_BRANCH: generated/${{ github.head_ref }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          ref: ${{ github.head_ref }}
+      - name: Checkout to branch
+        run: |    # TODO: do we even need to delete the branch (since we checkout elsewhere)
+          if git show-ref --verify --quiet "refs/heads/${{ env.GENERATED_BRANCH }}"; then
+            echo 'Deleting existing local branch';
+            git branch -D '${{ env.GENERATED_BRANCH }}';
+          fi
+          git checkout -b '${{ env.GENERATED_BRANCH }}'
+      - name: Remove possibly existing generated workflows
+        run: rm -rf generated
+      - uses: actions/download-artifact@v3
+        with:
+          name: generated-workflows
+          path: generated
+      - name: Push changes to branch
+        run: |
+          git config user.email whitesmith.thedj@gmail.com
+          git config user.name 'Hathoute (auto)'
+          git add generated
+          git commit -m 'chore: add built workflow'
+          git push -f --set-upstream origin '${{ env.GENERATED_BRANCH }}'
