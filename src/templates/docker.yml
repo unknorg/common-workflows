@@ -1,7 +1,7 @@
 # Needs:
 ## ENVIRONMENT VARIABLES:
 # - BUILD_ARTIFACT_NAME: The name of the artifact containing the data to copy to docker
-# - DOCKER_IMAGE_TAG: The tag of the Docker image to build, e.g. latest, 1.0.0, dev-snapshot, ...
+# - DOCKER_IMAGE_TAG: The tag of the Docker image to build, e.g. latest, 1.0.0, dev-snapshot, ....
 # - if using build-docker-hub:
 # -   secrets.DOCKER_USERNAME: The username of the Docker Hub account to push the image to.
 # -   secrets.DOCKER_PASSWORD: The password of the Docker Hub account to push the image to.
