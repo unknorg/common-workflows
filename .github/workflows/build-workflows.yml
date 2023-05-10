@@ -1,9 +1,11 @@
 name: Test Build Workflows
 
 on:
-  pull_request:
+  push:
     branches:
-      - main
+      - '*'         # We don't want to target dependabot branches, which usually have a '/'
+      - '!main'
+      - '!generated/*'
     paths:
       - 'src/**'        # Test build workflows when a template/workflow is changed
 
@@ -21,18 +23,19 @@ jobs:
           name: generated-workflows
           path: generated
           retention-days: 1
-  create-branch:
+  generated-branch:
+    name: Create or update generated branch
     runs-on: ubuntu-latest
     needs: [generate-workflows]
     permissions:
       contents: write
     env:
-      GENERATED_BRANCH: generated/${{ github.head_ref }}
+      GENERATED_BRANCH: generated/${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v3
         with:
           fetch-depth: 0
-          ref: ${{ github.head_ref }}
+          ref: ${{ github.ref_name }}
       - name: Checkout to branch
         run: |    # TODO: do we even need to delete the branch (since we checkout elsewhere)
           if git show-ref --verify --quiet "refs/heads/${{ env.GENERATED_BRANCH }}"; then
@@ -53,3 +56,36 @@ jobs:
           git add generated
           git commit -m 'chore: add built workflow'
           git push -f --set-upstream origin '${{ env.GENERATED_BRANCH }}'
+
+  generated-pr:
+    name: Create pull request if not exists
+    runs-on: ubuntu-latest
+    needs: [generated-branch]
+    permissions:
+      pull-requests: write
+    env:
+      GENERATED_BRANCH: generated/${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          ref: ${{ env.GENERATED_BRANCH }}
+      - run: |
+          echo "::debug::Creating new PR: "
+          echo "::debug::   - repository: $REPO_NAME"
+          echo "::debug::   - branch:     $BRANCH_NAME"
+          echo "::debug::   - assignee:   $BRANCH_OWNER"
+          if MESSAGE=$( gh pr create --repo "$REPO_NAME" --assignee "$BRANCH_OWNER" --head "$BRANCH_NAME" --draft --title "$PR_TITLE" --body "Auto PR" 2>&1 >/dev/null ) || echo "$MESSAGE" | grep -q "a pull request for branch .* into branch .* already exists"
+          then
+            echo "::debug::Pull request already exists"
+            exit 0
+          elif echo "$MESSAGE" | grep -q "Draft pull requests are not supported"
+          then
+            echo "::debug::Repository does not support draft pull requests"
+            gh pr create --repo "$REPO_NAME" --assignee "$BRANCH_OWNER" --head "$BRANCH_NAME" --title "$PR_TITLE" --body "Auto PR"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH_NAME: ${{ env.GENERATED_BRANCH }}
+          BRANCH_OWNER: ${{ github.actor }}
+          REPO_NAME: ${{ github.repository }}
+          PR_TITLE: Generated workflows for ${{ github.ref_name }}
