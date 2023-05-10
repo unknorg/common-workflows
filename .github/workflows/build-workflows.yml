@@ -70,22 +70,22 @@ jobs:
         with:
           ref: ${{ env.GENERATED_BRANCH }}
       - run: |
-          echo "::debug::Creating new PR:"
+          echo "::debug::Creating new PR: "
           echo "::debug::   - repository: $REPO_NAME"
           echo "::debug::   - branch:     $BRANCH_NAME"
           echo "::debug::   - assignee:   $BRANCH_OWNER"
-          MESSAGE=$( gh pr create --repo $REPO_NAME --assignee $BRANCH_OWNER --head $BRANCH_NAME --draft --title "$PR_TITLE" --body "Auto PR" 2>&1 >/dev/null )
-          if [ $? = 0 ] || echo $MESSAGE | grep -q "a pull request for branch .* into branch .* already exists" 
+          if MESSAGE=$( gh pr create --repo "$REPO_NAME" --assignee "$BRANCH_OWNER" --head "$BRANCH_NAME" --draft --title "$PR_TITLE" --body "Auto PR" 2>&1 >/dev/null ) || echo "$MESSAGE" | grep -q "a pull request for branch .* into branch .* already exists"
           then
+            echo "::debug::Pull request already exists"
             exit 0
-          elif echo $MESSAGE | grep -q "Draft pull requests are not supported" 
+          elif echo "$MESSAGE" | grep -q "Draft pull requests are not supported"
           then
             echo "::debug::Repository does not support draft pull requests"
-            gh pr create --repo $REPO_NAME --assignee $BRANCH_OWNER --head "generated/$BRANCH_NAME" --title "$BRANCH_NAME" --body "Auto PR"
+            gh pr create --repo "$REPO_NAME" --assignee "$BRANCH_OWNER" --head "$BRANCH_NAME" --title "$PR_TITLE" --body "Auto PR"
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BRANCH_NAME: ${{ env.GENERATED_BRANCH }}
           BRANCH_OWNER: ${{ github.actor }}
           REPO_NAME: ${{ github.repository }}
-          PR_TITLE: "Generated workflows for ${{ github.ref_name }}"
+          PR_TITLE: Generated workflows for ${{ github.ref_name }}
