@@ -46,7 +46,7 @@ jobs:
         with:
           name: generated-workflows
           path: generated
-      - name: Push changes to branch
+      - name: Push changes to branche
         run: |
           git config user.email whitesmith.thedj@gmail.com
           git config user.name 'Hathoute (auto)'
