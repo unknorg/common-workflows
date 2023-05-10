@@ -3,6 +3,7 @@ name: Test Build Workflows
 on:
   push:
     branches:
+      - '*'         # We don't want to target dependabot branches, which usually have a '/'
       - '!main'
       - '!generated/*'
     paths:
@@ -29,12 +30,12 @@ jobs:
     permissions:
       contents: write
     env:
-      GENERATED_BRANCH: generated/${{ github.head_ref }}
+      GENERATED_BRANCH: generated/${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v3
         with:
           fetch-depth: 0
-          ref: ${{ github.head_ref }}
+          ref: ${{ github.ref_name }}
       - name: Checkout to branch
         run: |    # TODO: do we even need to delete the branch (since we checkout elsewhere)
           if git show-ref --verify --quiet "refs/heads/${{ env.GENERATED_BRANCH }}"; then
