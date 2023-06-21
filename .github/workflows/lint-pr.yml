@@ -7,7 +7,7 @@ on:
 
 jobs:
   lint-commits:
-    runs-on: ubuntu-latest
+    runs-on: arc-systems
     permissions:
       pull-requests: write
     steps:
