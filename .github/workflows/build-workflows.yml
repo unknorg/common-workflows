@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: Generate workflows
-        uses: Hathoute/workflow-preprocessor@1.0.2
+        uses: unknorg/workflow-preprocessor@1.0.3
         with:
           generated-directory: './generated'
       - uses: actions/upload-artifact@v3
