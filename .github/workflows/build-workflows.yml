@@ -6,8 +6,6 @@ on:
       - '*'         # We don't want to target dependabot branches, which usually have a '/'
       - '!main'
       - '!generated/*'
-    paths:
-      - 'src/**'        # Test build workflows when a template/workflow is changed
 
 jobs:
   generate-workflows:
@@ -31,6 +29,8 @@ jobs:
       contents: write
     env:
       GENERATED_BRANCH: generated/${{ github.ref_name }}
+    outputs:
+      GENERATED_CHANGED: ${{ steps.configure.outputs.GENERATED_CHANGED }}
     steps:
       - uses: actions/checkout@v3
         with:
@@ -49,11 +49,17 @@ jobs:
         with:
           name: generated-workflows
           path: generated
+      - name: Configure git and check for changes
+        id: configure
+        run: |
+          git add generated
+          changed=$(git diff --stat | grep -E "[1-9][0-9]+ files changed" | wc -l);
+          echo "GENERATED_CHANGED=$changed" >> $GITHUB_ENV
       - name: Push changes to branch
+        if: ${{ env.GENERATED_CHANGED == '1' }}
         run: |
           git config user.email whitesmith.thedj@gmail.com
           git config user.name 'Hathoute (auto)'
-          git add generated
           git commit -m 'chore: add built workflow'
           git push -f --set-upstream origin '${{ env.GENERATED_BRANCH }}'
 
@@ -65,6 +71,7 @@ jobs:
       pull-requests: write
     env:
       GENERATED_BRANCH: generated/${{ github.ref_name }}
+    if: ${{ needs.generated-branch.outputs.GENERATED_CHANGED == '1' }}
     steps:
       - uses: actions/checkout@v3
         with:
