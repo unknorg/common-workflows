@@ -8,7 +8,7 @@ on:
       - '!generated/*'
 
 env:
-  BUILD_DIR: .github/workflows/generated
+  BUILD_DIR: generated
 
 jobs:
   generate-workflows:
@@ -50,12 +50,12 @@ jobs:
       - uses: actions/download-artifact@v3
         with:
           name: generated-workflows
-          path: ${{ env.BUILD_DIR }}
+          path: .github/workflows
       - name: Configure git and check for changes
         id: configure
         run: |
-          git add ${{ env.BUILD_DIR }}
-          changed=$(git status -s | grep -E "[AM]\s+.github/workflows/generated" | wc -l);
+          git add .github/workflows/*
+          changed=$(git status -s | grep -E "[RAM]\s+.github/workflows" | wc -l);
           echo "GENERATED_CHANGED=$changed" >> $GITHUB_ENV
           echo "GENERATED_CHANGED=$changed" >> $GITHUB_OUTPUT
       - name: Push changes to branch
