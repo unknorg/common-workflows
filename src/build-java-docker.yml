@@ -30,7 +30,7 @@ on:
         default: ''
         type: string
     secrets:
-      GITHUB_TOKEN:
+      GITHUB_PAT:
         description: 'Github token.'
         required: true
       DOCKER_USERNAME:
