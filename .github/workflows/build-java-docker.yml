@@ -1,0 +1,217 @@
+name: Dockerized Java Build
+'on':
+  workflow_call:
+    inputs:
+      jdk-version:
+        description: The JDK version to use (8, 11, 15, ...)
+        required: true
+        default: '17'
+        type: string
+      java-build-tool:
+        description: The build tool to use (maven or gradle)
+        required: true
+        default: maven
+        type: string
+      docker-registry:
+        description: The docker registry to push the image to (docker-hub or ghcr)
+        required: true
+        default: docker-hub
+        type: string
+      release-version:
+        description: >-
+          Release version to tag both the java and docker image with. Ignored if
+          running from a pull request.
+        required: false
+        default: ''
+        type: string
+    secrets:
+      GITHUB_TOKEN:
+        description: Github token.
+        required: true
+      DOCKER_USERNAME:
+        description: Docker Hub login username. Required if docker-registry is docker-hub.
+        required: false
+      DOCKER_PASSWORD:
+        description: Docker Hub login password. Required if docker-registry is docker-hub
+        required: false
+jobs:
+  lint-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Lint commits
+        uses: actions-ecosystem/action-lint-commits@v1
+        id: lint-commits
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          regex: '^\w+(\(.+\))?: .+'
+          format: markdown
+      - name: Fail immediately if not a pull request
+        if: ${{ github.event_name != 'pull_request' }}
+        run: |
+          echo "::error::Commit messages don't pass lint."
+          echo "::error::${{ steps.lint-commits.outputs.unmatched_commits }}"
+          exit 1
+      - name: Post warning comment
+        uses: Hathoute/action-create-comment@v1.0.4
+        if: ${{ steps.lint-commits.outputs.unmatched_commits != '' }}
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          comment_uid: 513522
+          body: >
+            The following commits needs their message changes:
+
+
+            ${{ steps.lint-commits.outputs.unmatched_commits }}
+
+
+            The format `<type>(<scope>): <subject>` (`^\w+(\(.+\))?: .+`) is
+            acceptable. e.g., `feat(api): Add /users/get`
+      - name: Post valid comment
+        uses: Hathoute/action-create-comment@v1.0.4
+        if: ${{ steps.lint-commits.outputs.unmatched_commits == '' }}
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          comment_uid: 513522
+          body: |
+            All the commit messages are valid.
+
+            ✔️ Lint passed.
+      - name: Fail when commits don't pass lint
+        if: ${{ steps.lint-commits.outputs.unmatched_commits != '' }}
+        run: >
+          echo "::error::Commit messages don't pass lint, check the comment on
+          the PR for more details."
+
+          exit 1
+    if: ${{ github.event_name == 'pull_request' }}
+  format-release-version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Format release version for PR
+        if: ${{ github.event_name == 'pull_request' }}
+        id: pull-request
+        run: echo "version=${{ github.base_ref }}" >> $GITHUB_ENV
+      - name: Format release version for release
+        if: ${{ github.event_name != 'pull_request' }}
+        id: release
+        run: echo "version=${{ env.RELEASE_VERSION }}" >> $GITHUB_ENV
+      - name: Unify
+        id: unified
+        run: echo "release_version=${{ env.version }}" >> $GITHUB_OUTPUT
+    outputs:
+      release_version: ${{ steps.unified.outputs.release_version }}
+  mvn-build-java:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "internal_build_tool=maven" >> $GITHUB_ENV
+      - uses: actions/checkout@v3
+      - name: Set up JDK ${{ JAVA_JDK_VERSION }}
+        uses: actions/setup-java@v3
+        with:
+          java-version: ${{ JAVA_JDK_VERSION }}
+          cache: ${{ env.internal_build_tool }}
+      - name: Build with Maven
+        run: >-
+          mvn -Drevision="${{ JAVA_BUILD_VERSION }}" -B clean package --file
+          pom.xml
+      - name: Compress build artifact
+        run: cd target; zip -r ../build.zip *
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ BUILD_ARTIFACT_NAME }}
+          path: build.zip
+    if: ${{ env.JAVA_BUILD_TOOL == 'maven' }}
+    env:
+      JAVA_JDK_VERSION: ${{ inputs.jdk-version }}
+      JAVA_BUILD_VERSION: ${{ needs.format-release-version.outputs.release-version }}
+      BUILD_ARTIFACT_NAME: ${{ needs.format-release-version.outputs.release-version }}
+  gradle-build-java:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "internal_build_tool=gradle" >> $GITHUB_ENV
+      - uses: actions/checkout@v3
+      - name: Set up JDK ${{ JAVA_JDK_VERSION }}
+        uses: actions/setup-java@v3
+        with:
+          java-version: ${{ JAVA_JDK_VERSION }}
+          cache: ${{ env.internal_build_tool }}
+      - name: Build with Gradle
+        run: ./gradlew build
+      - name: Compress build artifact
+        run: cd build/libs; zip -r ../../build.zip *
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ BUILD_ARTIFACT_NAME }}
+          path: build.zip
+    if: ${{ env.JAVA_BUILD_TOOL == 'gradle' }}
+    env:
+      JAVA_JDK_VERSION: ${{ inputs.jdk-version }}
+      JAVA_BUILD_VERSION: ${{ needs.format-release-version.outputs.release-version }}
+      BUILD_ARTIFACT_NAME: ${{ needs.format-release-version.outputs.release-version }}
+  build-docker-hub:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "internal_docker_name=${{ DOCKER_IMAGE_NAME }}" >> $GITHUB_ENV
+      - uses: actions/checkout@v3
+      - uses: actions/download-artifact@v3
+        with:
+          name: ${{ BUILD_ARTIFACT_NAME }}
+          path: build.zip
+      - name: Unzip build artifact
+        run: unzip build.zip
+      - name: Build Docker image
+        run: docker build -t ${{ env.internal_docker_name }} .
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Push Docker image
+        run: docker push ${{ env.internal_docker_name }}
+    needs:
+      - mvn-build-java
+      - gradle-build-java
+    if: |
+      always() &&
+      contains(needs.*.result, 'success') &&
+      inputs.docker-registry == 'docker-hub'
+    env:
+      DOCKER_REGISTRY: ${{ inputs.docker-registry }}
+      BUILD_ARTIFACT_NAME: ${{ needs.format-release-version.outputs.release-version }}
+      DOCKER_IMAGE_TAG: ${{ needs.format-release-version.outputs.release-version }}
+  build-docker-ghcr:
+    runs-on: ubuntu-latest
+    steps:
+      - run: >-
+          echo "internal_docker_name=ghcr.io/${{ github.actor }}/${{
+          github.repository }}:${{ DOCKER_IMAGE_TAG }}" >> $GITHUB_ENV
+      - uses: actions/checkout@v3
+      - uses: actions/download-artifact@v3
+        with:
+          name: ${{ BUILD_ARTIFACT_NAME }}
+          path: build.zip
+      - name: Unzip build artifact
+        run: unzip build.zip
+      - name: Build Docker image
+        run: docker build -t ${{ env.internal_docker_name }} .
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push Docker image
+        run: docker push ${{ env.internal_docker_name }}
+    needs:
+      - mvn-build-java
+      - gradle-build-java
+    if: |
+      always() &&
+      contains(needs.*.result, 'success') &&
+      inputs.docker-registry == 'ghcr'
+    env:
+      DOCKER_REGISTRY: ${{ inputs.docker-registry }}
+      BUILD_ARTIFACT_NAME: ${{ needs.format-release-version.outputs.release-version }}
+      DOCKER_IMAGE_TAG: ${{ needs.format-release-version.outputs.release-version }}
