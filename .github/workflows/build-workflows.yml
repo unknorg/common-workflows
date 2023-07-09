@@ -3,7 +3,7 @@ name: Test Build Workflows
 on:
   push:
     branches:
-      - '*'         # We don't want to target dependabot branches, which usually have a '/'
+      - '*'
       - '!main'
       - '!generated/*'
 
