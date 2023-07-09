@@ -8,7 +8,7 @@ on:
       - '!generated/*'
 
 env:
-  BUILD_DIR: .github/workflows/generated
+  BUILD_DIR: generated
 
 jobs:
   generate-workflows:
@@ -19,6 +19,8 @@ jobs:
         uses: unknorg/workflow-preprocessor@1.0.3
         with:
           generated-directory: ${{ env.BUILD_DIR }}
+      - name: Rename generated workflows
+        run: find ${{ env.BUILD_DIR }} -type f -name '*.yml' -exec bash -c 'mv "$1" "${1%.yml}.gen.yml"' _ {} \;
       - uses: actions/upload-artifact@v3
         with:
           name: generated-workflows
@@ -46,16 +48,16 @@ jobs:
           fi
           git checkout -b '${{ env.GENERATED_BRANCH }}'
       - name: Remove possibly existing generated workflows
-        run: rm -rf ${{ env.BUILD_DIR }}
+        run: find .github/workflows -type f -name '*.gen.yml' -exec bash -c 'mv "$1" "${1%.yml}.gen.yml"' _ {} \;
       - uses: actions/download-artifact@v3
         with:
           name: generated-workflows
-          path: ${{ env.BUILD_DIR }}
+          path: .github/workflows
       - name: Configure git and check for changes
         id: configure
         run: |
-          git add ${{ env.BUILD_DIR }}
-          changed=$(git status -s | grep -E "[AM]\s+.github/workflows/generated" | wc -l);
+          git add .github/workflows/*
+          changed=$(git status -s | grep -E "[RAM]\s+.github/workflows" | wc -l);
           echo "GENERATED_CHANGED=$changed" >> $GITHUB_ENV
           echo "GENERATED_CHANGED=$changed" >> $GITHUB_OUTPUT
       - name: Push changes to branch

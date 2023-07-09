@@ -28,7 +28,7 @@ on:
         default: ''
         type: string
     secrets:
-      GITHUB_TOKEN:
+      GITHUB_PAT:
         description: 'Github Token.'
         required: true
 

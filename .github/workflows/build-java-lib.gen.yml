@@ -20,7 +20,7 @@ name: Deploy Java Library
         default: ''
         type: string
     secrets:
-      GITHUB_TOKEN:
+      GITHUB_PAT:
         description: Github Token.
         required: true
 jobs:
