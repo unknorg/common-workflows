@@ -48,7 +48,7 @@ jobs:
           fi
           git checkout -b '${{ env.GENERATED_BRANCH }}'
       - name: Remove possibly existing generated workflows
-        run: find .github/workflows -type f -name '*.gen.yml' -exec bash -c 'mv "$1" "${1%.yml}.gen.yml"' _ {} \;
+        run: find .github/workflows -type f -name '*.gen.yml' -exec bash -c 'rm -f "$1"' _ {} \;
       - uses: actions/download-artifact@v3
         with:
           name: generated-workflows
