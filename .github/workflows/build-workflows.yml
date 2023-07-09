@@ -7,6 +7,9 @@ on:
       - '!main'
       - '!generated/*'
 
+env:
+  BUILD_DIR: .github/workflows/generated
+
 jobs:
   generate-workflows:
     runs-on: arc-systems
@@ -15,18 +18,16 @@ jobs:
       - name: Generate workflows
         uses: unknorg/workflow-preprocessor@1.0.3
         with:
-          generated-directory: './generated'
+          generated-directory: ${{ env.BUILD_DIR }}
       - uses: actions/upload-artifact@v3
         with:
           name: generated-workflows
-          path: generated
+          path: ${{ env.BUILD_DIR }}
           retention-days: 1
   generated-branch:
     name: Create or update generated branch
     runs-on: arc-systems
     needs: [generate-workflows]
-    permissions:
-      contents: write
     env:
       GENERATED_BRANCH: generated/${{ github.ref_name }}
     outputs:
@@ -34,6 +35,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
         with:
+          token: ${{ secrets.REPOSITORY_TOKEN }}
           fetch-depth: 0
           ref: ${{ github.ref_name }}
       - name: Checkout to branch
@@ -44,19 +46,20 @@ jobs:
           fi
           git checkout -b '${{ env.GENERATED_BRANCH }}'
       - name: Remove possibly existing generated workflows
-        run: rm -rf generated
+        run: rm -rf ${{ env.BUILD_DIR }}
       - uses: actions/download-artifact@v3
         with:
           name: generated-workflows
-          path: generated
+          path: ${{ env.BUILD_DIR }}
       - name: Configure git and check for changes
         id: configure
         run: |
-          git add generated
-          changed=$(git diff --stat | grep -E "[1-9][0-9]+ files changed" | wc -l);
+          git add ${{ env.BUILD_DIR }}
+          changed=$(git status -s | grep -E "[AM]\s+.github/workflows/generated" | wc -l);
           echo "GENERATED_CHANGED=$changed" >> $GITHUB_ENV
+          echo "GENERATED_CHANGED=$changed" >> $GITHUB_OUTPUT
       - name: Push changes to branch
-        if: ${{ env.GENERATED_CHANGED == '1' }}
+        if: ${{ env.GENERATED_CHANGED >= '1' }}
         run: |
           git config user.email whitesmith.thedj@gmail.com
           git config user.name 'Hathoute (auto)'
@@ -71,7 +74,7 @@ jobs:
       pull-requests: write
     env:
       GENERATED_BRANCH: generated/${{ github.ref_name }}
-    if: ${{ needs.generated-branch.outputs.GENERATED_CHANGED == '1' }}
+    if: ${{ needs.generated-branch.outputs.GENERATED_CHANGED >= '1' }}
     steps:
       - uses: actions/checkout@v3
         with:
