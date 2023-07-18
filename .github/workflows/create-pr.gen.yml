@@ -1,11 +1,13 @@
 name: Create Pull Request
 'on':
-  workflow_call: {}
+  workflow_call:
+    secrets:
+      GITHUB_PAT:
+        description: Github Token.
+        required: false
 jobs:
   create_pr:
-    permissions:
-      pull-requests: write
-    runs-on: ubuntu-latest
+    runs-on: arc-systems
     if: ${{ github.ref_type == 'branch' }}
     steps:
       - run: >
@@ -17,16 +19,27 @@ jobs:
 
           echo "::debug::   - assignee:   $BRANCH_OWNER"
 
-          if echo $( gh pr create --repo $REPO_NAME --assignee $BRANCH_OWNER
-          --head $BRANCH_NAME --draft --title "$BRANCH_NAME" --body "Auto PR"
-          2>&1 >/dev/null ) | grep -q "Draft pull requests are not supported" 
+          set +e
 
-          then
-            echo "::debug::Repository does not support draft pull requests"
-            gh pr create --repo $REPO_NAME --assignee $BRANCH_OWNER --head $BRANCH_NAME --title "$BRANCH_NAME" --body "Auto PR"
+          cmd_msg=$( gh pr create --repo $REPO_NAME --assignee $BRANCH_OWNER
+          --head $BRANCH_NAME --draft --title "$BRANCH_NAME" --body "Auto PR"
+          2>&1 )
+
+          cmd_status=$?
+
+          set -e
+
+          if [ $cmd_status -ne 0 ]; then
+            if echo $cmd_msg | grep -q "Draft pull requests are not supported"; then
+              echo "::debug::Repository does not support draft pull requests"
+              gh pr create --repo $REPO_NAME --assignee $BRANCH_OWNER --head $BRANCH_NAME --title "$BRANCH_NAME" --body "Auto PR"
+            else
+              echo "Failed to create pull request: $cmd_msg"
+              exit 1
+            fi
           fi
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_PAT || secrets.COMMON_PAT || github.token }}
           BRANCH_NAME: ${{ github.ref_name }}
           BRANCH_OWNER: ${{ github.actor }}
           REPO_NAME: ${{ github.repository }}
