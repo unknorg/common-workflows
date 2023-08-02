@@ -1,5 +1,5 @@
 # This workflow builds a Java container and pushes it to a docker registry.
-# Currently supporting maven and gradle for java build, and docker hub and ghcr for docker registry.
+# Currently supporting maven for java build, and docker hub and ghcr for docker registry.
 # Needs:
 ## PERMISSIONS:
 # - if running from a pull request:
@@ -18,7 +18,7 @@ on:
         default: '17'
         type: string
       java-build-tool:
-        description: 'The build tool to use (maven or gradle)'
+        description: 'The build tool to use (maven for now)'
         required: true
         default: 'maven'
         type: string
@@ -28,9 +28,9 @@ on:
         default: ''
         type: string
     secrets:
-      GITHUB_PAT:
-        description: 'Github Token.'
-        required: true
+      MAVEN_SETTINGS_XML:
+        description: 'A custom definition of ~/.m2/settings.xml'
+        required: false
 
 imports:
   - 'templates/linter.yml'
@@ -45,5 +45,6 @@ jobs:
   format-release-version:
     extends: format/release-version
 
-  deploy-java-maven:
-    extends: java/deploy-java-maven
+  build-java-maven:
+    needs: [format-release-version]
+    extends: java/build-java-maven

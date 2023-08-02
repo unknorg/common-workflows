@@ -2,45 +2,87 @@
 ## ENVIRONMENT VARIABLES:
 # - BUILD_ARTIFACT_NAME: The name of the artifact containing the data to copy to docker
 # - DOCKER_IMAGE_TAG: The tag of the Docker image to build, e.g. latest, 1.0.0, dev-snapshot, ....
-# - if using build-docker-hub:
-# -   secrets.DOCKER_USERNAME: The username of the Docker Hub account to push the image to.
-# -   secrets.DOCKER_PASSWORD: The password of the Docker Hub account to push the image to.
+# - DOCKER_REGISTRY: The name/url of the docker registry.
+# - USE_CUSTOM_ARTIFACT_REPO (Optional): Whether to use a custom artifact repository or use GitHub's shared storage.
+# - secrets.ADDITIONAL_DOCKER_REPOS (Optional): Additional docker repositories (repoUrl;username;password)
+# - if USE_CUSTOM_ARTIFACT_REPO is 'true':
+# -   ARTIFACT_REPO_URL (Optional): The URL of the artifact repository (if USE_CUSTOM_ARTIFACT_REPO == true).
+# -   secrets.ARTIFACT_REPO_USER (Optional): The username of the artifact repository (if USE_CUSTOM_ARTIFACT_REPO == true).
+# -   secrets.ARTIFACT_REPO_PASSWORD (Optional): The password of the artifact repository (if USE_CUSTOM_ARTIFACT_REPO == true).
+# - if not using build-docker-ghcr:
+# -   secrets.DOCKER_REPOSITORY_USER: The username of the Docker account to push the image to.
+# -   secrets.DOCKER_REPOSITORY_PASSWORD: The password of the Docker account to push the image to.
 
 internals:
+  - init-docker: &init_docker
+      name: Register additional repositories
+      run: |
+        echo "${{ secrets.ADDITIONAL_DOCKER_REPOS }}" | while read line
+        do
+          IFS=';' read -r -a array <<< "$line"
+          docker login ${array[0]} -u ${array[1]} -p ${array[2]}
+        done
+
   - build-image: &build_image !zipped
+    - *init_docker
     - uses: actions/checkout@v3
-    - uses: actions/download-artifact@v3
       with:
-        name: ${{ BUILD_ARTIFACT_NAME }}
+        token: ${{ secrets.GITHUB_TOKEN }}
+    - name: Download artifact using Github
+      uses: actions/download-artifact@v3
+      if: ${{ env.USE_CUSTOM_ARTIFACT_REPO != 'true' }}
+      with:
+        name: ${{ env.BUILD_ARTIFACT_NAME }}
         path: build.zip
+    - name: Download artifact using external service
+      if: ${{ env.USE_CUSTOM_ARTIFACT_REPO == 'true' }}
+      run: |
+        artifactPath="${{ env.ARTIFACT_REPO_URL }}github/${{ github.run_id }}/${{ env.BUILD_ARTIFACT_NAME }}"
+        tries=0
+        while : ; do
+          statusCode=$(curl --write-out '%{http_code}' -o build.zip --user '${{ secrets.ARTIFACT_REPO_USER }}:${{ secrets.ARTIFACT_REPO_PASSWORD }}' $artifactPath)
+          echo "Try $((++tries)) - Status code: $statusCode"
+          [[ $statusCode = "200" || $tries = "5" ]] && break
+        done
+        # Fail if statusCode is not 200 - OK
+        [[ $statusCode = "200" ]] || exit 1
     - name: Unzip build artifact
       run: unzip build.zip
     - name: Build Docker image
       run: docker build -t ${{ env.internal_docker_name }} .
+    - name: Push Docker image
+      run: docker push ${{ env.internal_docker_name }}
 
 jobs:
   build-docker-hub:
-    runs-on: ubuntu-latest
+    runs-on: arc-systems
     steps: !unzip
-      - run: echo "internal_docker_name=${{ DOCKER_IMAGE_NAME }}" >> $GITHUB_ENV
-      - *build_image
+      - run: echo "internal_docker_name=${{ env.DOCKER_IMAGE_NAME }}" >> $GITHUB_ENV
       - name: Login to Docker Hub
         uses: docker/login-action@v2
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-      - name: Push Docker image
-        run: docker push ${{ env.internal_docker_name }}
-  build-docker-ghcr:
-    runs-on: ubuntu-latest
-    steps: !unzip
-      - run: echo "internal_docker_name=ghcr.io/${{ github.actor }}/${{ github.repository }}:${{ DOCKER_IMAGE_TAG }}" >> $GITHUB_ENV
+          username: ${{ secrets.DOCKER_REPOSITORY_USER }}
+          password: ${{ secrets.DOCKER_REPOSITORY_PASSWORD }}
       - *build_image
+  build-docker-ghcr:
+    runs-on: arc-systems
+    steps: !unzip
+      - run: echo "ghcr.io/${{ github.repository }}:${{ env.DOCKER_IMAGE_TAG }}" | awk '{ print "internal_docker_name="tolower($0) }' >> $GITHUB_ENV
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v2
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Push Docker image
-        run: docker push ${{ env.internal_docker_name }}
+      - *build_image
+  build-docker-custom:
+    runs-on: arc-systems
+    steps: !unzip
+      - run: echo "${{ env.DOCKER_REGISTRY }}/${{ github.repository }}:${{ env.DOCKER_IMAGE_TAG }}" | awk '{ print "internal_docker_name="tolower($0) }' >> $GITHUB_ENV
+      - name: Login to the Docker Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ secrets.DOCKER_REPOSITORY_USER }}
+          password: ${{ secrets.DOCKER_REPOSITORY_PASSWORD }}
+      - *build_image

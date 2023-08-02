@@ -5,12 +5,12 @@
 
 jobs:
   release-version:
-    runs-on: ubuntu-latest
+    runs-on: arc-systems
     steps:
       - name: Format release version for PR
         if: ${{ github.event_name == 'pull_request' }}
         id: pull-request
-        run: echo "version=${{ github.base_ref }}" >> $GITHUB_ENV
+        run: echo "version=${{ github.head_ref }}" >> $GITHUB_ENV
       - name: Format release version for release
         if: ${{ github.event_name != 'pull_request' }}
         id: release
