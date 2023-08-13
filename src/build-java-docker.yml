@@ -1,9 +1,15 @@
 # This workflow builds a Java container and pushes it to a docker registry.
-# Currently supporting maven and gradle for java build, and docker hub and ghcr for docker registry.
+# Currently supporting maven only for java build, and docker hub and ghcr for docker registry.
 # Needs:
 ## PERMISSIONS:
 # - if running from a pull request:
 #   - pull-requests: write (from templates/linter.yml)
+
+# - USE_CUSTOM_ARTIFACT_REPO (Optional): Whether to use a custom artifact repository or use GitHub's shared storage.
+# - if USE_CUSTOM_ARTIFACT_REPO is 'true':
+# -   ARTIFACT_REPO_URL (Optional): The URL of the artifact repository (if USE_CUSTOM_ARTIFACT_REPO == true).
+# -   secrets.ARTIFACT_REPO_USER (Optional): The username of the artifact repository (if USE_CUSTOM_ARTIFACT_REPO == true).
+# -   secrets.ARTIFACT_REPO_PASSWORD (Optional): The password of the artifact repository (if USE_CUSTOM_ARTIFACT_REPO == true).
 
 name: Dockerized Java Build
 on:
@@ -15,12 +21,12 @@ on:
         default: '17'
         type: string
       java-build-tool:
-        description: 'The build tool to use (maven or gradle)'
+        description: 'The build tool to use (maven for now)'
         required: true
         default: 'maven'
         type: string
       docker-registry:
-        description: 'The docker registry to push the image to (docker-hub or ghcr)'
+        description: 'The docker registry to push the image to (docker-hub or ghcr or https://docker-repo.example/)'
         required: true
         default: 'docker-hub'
         type: string
@@ -29,15 +35,34 @@ on:
         required: false
         default: ''
         type: string
-    secrets:
-      GITHUB_PAT:
-        description: 'Github token.'
-        required: true
-      DOCKER_USERNAME:
-        description: 'Docker Hub login username. Required if docker-registry is docker-hub.'
+      use-custom-artifact-repo:
+        description: 'Whether to use a custom artifact repository or use GitHubs shared storage'
         required: false
-      DOCKER_PASSWORD:
-        description: 'Docker Hub login password. Required if docker-registry is docker-hub'
+        default: 'false'
+        type: string
+      artifact-repo-url:
+        description: 'The URL of the artifact repository (if use-custom-artifact-repo == "true")'
+        required: false
+        default: ''
+        type: string
+    secrets:
+      DOCKER_REPOSITORY_USER:
+        description: 'Docker repository login username. Required if the docker registry requires authentication.'
+        required: false
+      DOCKER_REPOSITORY_PASSWORD:
+        description: 'Docker repository login password. Required if the docker registry requires authentication.'
+        required: false
+      ADDITIONAL_DOCKER_REPOS:
+        description: 'Additional docker repositories. Must be formatted as lines of "repoUrl;username;password".'
+        required: false
+      MAVEN_SETTINGS_XML:
+        description: 'A custom definition of ~/.m2/settings.xml'
+        required: false
+      ARTIFACT_REPO_USER:
+        description: 'The username of the artifact repository (if use-custom-artifact-repo == "true")'
+        required: false
+      ARTIFACT_REPO_PASSWORD:
+        description: 'The password of the artifact repository (if use-custom-artifact-repo == "true")'
         required: false
 
 imports:
@@ -47,16 +72,21 @@ imports:
   - 'templates/format.yml'
 
 internals:
+  common-envs: &common_envs
+    BUILD_ARTIFACT_NAME: ${{ needs.format-release-version.outputs.release_version }}
+    USE_CUSTOM_ARTIFACT_REPO: ${{ inputs.use-custom-artifact-repo }}
+    ARTIFACT_REPO_URL: ${{ inputs.artifact-repo-url }}
+
   java-envs: &java_envs
     JAVA_JDK_VERSION: ${{ inputs.jdk-version }}
-    JAVA_BUILD_VERSION: ${{ needs.format-release-version.outputs.release-version }}
-    BUILD_ARTIFACT_NAME: ${{ needs.format-release-version.outputs.release-version }}
+    JAVA_BUILD_TOOL: ${{ inputs.java-build-tool }}
+    JAVA_BUILD_VERSION: ${{ needs.format-release-version.outputs.release_version }}
+    <<: *common_envs
+
   docker-envs: &docker_envs
+    DOCKER_IMAGE_TAG: ${{ needs.format-release-version.outputs.release_version }}
     DOCKER_REGISTRY: ${{ inputs.docker-registry }}
-    BUILD_ARTIFACT_NAME: ${{ needs.format-release-version.outputs.release-version }}
-    DOCKER_IMAGE_TAG: ${{ needs.format-release-version.outputs.release-version }}
-
-
+    <<: *common_envs
 jobs:
   lint-commits:
     if: ${{ github.event_name == 'pull_request' }}
@@ -66,19 +96,14 @@ jobs:
     extends: format/release-version
 
   mvn-build-java:
-    if: ${{ env.JAVA_BUILD_TOOL == 'maven' }}
+    needs: [format-release-version]
+    if: ${{ inputs.java-build-tool == 'maven' }}
     env:
       <<: *java_envs
     extends: java/build-java-maven
 
-  gradle-build-java:
-    if: ${{ env.JAVA_BUILD_TOOL == 'gradle' }}
-    env:
-      <<: *java_envs
-    extends: java/build-java-gradle
-
   build-docker-hub:
-    needs: [mvn-build-java, gradle-build-java]
+    needs: [format-release-version, mvn-build-java]
     if: |
       always() &&
       contains(needs.*.result, 'success') &&
@@ -88,7 +113,7 @@ jobs:
     extends: docker/build-docker-hub
 
   build-docker-ghcr:
-    needs: [mvn-build-java, gradle-build-java]
+    needs: [format-release-version, mvn-build-java]
     if: |
       always() &&
       contains(needs.*.result, 'success') &&
@@ -96,3 +121,15 @@ jobs:
     env:
       <<: *docker_envs
     extends: docker/build-docker-ghcr
+
+  # TODO: its probably (definitely) possible to merge all these builds in a single one...
+  build-docker-custom:
+    needs: [format-release-version, mvn-build-java]
+    if: |
+      always() &&
+      contains(needs.*.result, 'success') &&
+      inputs.docker-registry != 'docker-hub' && 
+      inputs.docker-registry != 'ghcr'
+    env:
+      <<: *docker_envs
+    extends: docker/build-docker-custom

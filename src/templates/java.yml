@@ -5,56 +5,108 @@
 # - JAVA_BUILD_VERSION: The version of the build, e.g. 1.0.0, 1.0.0-SNAPSHOT, ...
 # - JAVA_JDK_VERSION: The version of the JDK, e.g. 8, 11, 17, ...
 # - BUILD_ARTIFACT_NAME: The name of the artifact to upload, e.g. 1.0.0-rc, file.zip, ...
+# - secrets.MAVEN_SETTINGS_XML (Optional): A custom definition of ~/.m2/settings.xml
+# - USE_CUSTOM_ARTIFACT_REPO (Optional): Whether to use a custom artifact repository or use GitHub's shared storage.
+# - if USE_CUSTOM_ARTIFACT_REPO is 'true':
+# -   ARTIFACT_REPO_URL (Optional): The URL of the artifact repository (if USE_CUSTOM_ARTIFACT_REPO == true).
+# -   secrets.ARTIFACT_REPO_USER (Optional): The username of the artifact repository (if USE_CUSTOM_ARTIFACT_REPO == true).
+# -   secrets.ARTIFACT_REPO_PASSWORD (Optional): The password of the artifact repository (if USE_CUSTOM_ARTIFACT_REPO == true).
 
 internals:
   pre: &pre !zipped
-    - uses : actions/checkout@v3
-  setup-jdk: &setup_jdk
-    name: Set up JDK ${{ JAVA_JDK_VERSION }}
-    uses: actions/setup-java@v3
-    with:
-      java-version: ${{ JAVA_JDK_VERSION }}
-      cache: ${{ env.internal_build_tool }}
-  upload-artifact: &upload_artifact
-    name: Upload artifact
-    uses: actions/upload-artifact@v3
-    with:
-      name: ${{ BUILD_ARTIFACT_NAME }}
-      path: build.zip
+    - uses: actions/checkout@v3
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+  setup-jdk: &setup_jdk !zipped
+    - name: Format actions/setup-java cache
+      run: |
+        cachePkgMgr=""
+        if [[ ${{ env.USE_CUSTOM_ARTIFACT_REPO }} != "true" ]]; then
+          cachePkgMgr="${{ env.internal_build_tool }}"
+        fi
+        echo "jdk_cache=$cachePkgMgr" >> $GITHUB_ENV
+    - name: Set up JDK ${{ env.JAVA_JDK_VERSION }}
+      uses: actions/setup-java@v3
+      with:
+        java-version: ${{ env.JAVA_JDK_VERSION }}
+        distribution: ${{ env.JAVA_JDK_DISTRIBUTION || 'corretto' }}
+        cache: ${{ env.jdk_cache }}
+    - name: Download cached dependencies
+      if: ${{ env.USE_CUSTOM_ARTIFACT_REPO == 'true' }}
+      run: |
+        mkdir -p ${{ env.cache_dir }}
+        cd ${{ env.cache_dir }}
+        cachePath="${{ env.ARTIFACT_REPO_URL }}cache/${{ env.internal_build_tool }}/${{ env.cache_hash }}/cached.tar.gz"
+        tries=0
+        while : ; do
+          statusCode=$(curl --write-out '%{http_code}' -o cached.tar.gz --user '${{ secrets.ARTIFACT_REPO_USER }}:${{ secrets.ARTIFACT_REPO_PASSWORD }}' $cachePath)
+          echo "Try $((++tries)) - Status code: $statusCode"
+          [[ $statusCode = "200" || $statusCode = "404" || $tries = "5" ]] && break
+        done
+        [[ $statusCode = "200" ]] || exit 0
+        tar -xzf cached.tar.gz
+        rm -rf cached.tar.gz
+  upload-artifact: &upload_artifact !zipped
+    - name: Upload artifact using Github
+      if: ${{ env.USE_CUSTOM_ARTIFACT_REPO != 'true' }}
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ env.BUILD_ARTIFACT_NAME }}
+        path: build.zip
+    - name: Upload artifact using external service
+      if: ${{ env.USE_CUSTOM_ARTIFACT_REPO == 'true' }}
+      # TODO: will be a good idea to wrap this logic (and incoming new features) in an initializer which could be a job that runs first and exports shell functions?
+      run: |
+        artifactPath="${{ env.ARTIFACT_REPO_URL }}github/${{ github.run_id }}/${{ env.BUILD_ARTIFACT_NAME }}"
+        tries=0
+        while : ; do
+          statusCode=$(curl --write-out '%{http_code}' --silent --output /dev/null \
+          --user '${{ secrets.ARTIFACT_REPO_USER }}:${{ secrets.ARTIFACT_REPO_PASSWORD }}' \
+          --upload-file build.zip $artifactPath)
+          echo "Try $((++tries)) - Status code: $statusCode"
+          [[ $statusCode = "201" || $tries = "5" ]] && break
+        done
+        # Fail if statusCode is not 201 - Created
+        [[ $statusCode = "201" ]] || exit 1
+  update-maven-settings: &maven_settings
+    name: Update settings.xml
+    run: '[ ! "${{ secrets.MAVEN_SETTINGS_XML }}"] || echo "${{ secrets.MAVEN_SETTINGS_XML }}" > ~/.m2/settings.xml'
+  upload-repo-cache: &upload_repo_cache
+    name: Upload cached dependencies
+    run: |
+      mkdir -p ${{ env.cache_dir }}
+      cd ${{ env.cache_dir }}
+      [[ -z "$(ls -A .)" ]] && exit 0
+      
+      tar -cvzf ../cached.tar.gz .
+      
+      cachePath="${{ env.ARTIFACT_REPO_URL }}cache/${{ env.internal_build_tool }}/${{ env.cache_hash }}/cached.tar.gz"
+      tries=0
+      while : ; do
+        statusCode=$(curl --write-out '%{http_code}' --silent --output /dev/null \
+        --user '${{ secrets.ARTIFACT_REPO_USER }}:${{ secrets.ARTIFACT_REPO_PASSWORD }}' \
+        --upload-file ../cached.tar.gz $cachePath)
+        echo "::debug::Try $((++tries)) - Status code: $statusCode"
+        [[ $statusCode = "201" || $tries = "5" ]] && break
+      done
+      
+      # Warn if statusCode is not 201 - Created
+      [[ $statusCode = "201" ]] || echo "::warning Could not upload cache"
 
 jobs:
   build-java-maven:
-    runs-on: ubuntu-latest
+    runs-on: arc-systems
     steps: !unzip
-      - run: echo "internal_build_tool=maven" >> $GITHUB_ENV
       - *pre
+      - run: |
+          echo "internal_build_tool=maven" >> $GITHUB_ENV
+          echo "cache_dir=~/.m2/repository" >> $GITHUB_ENV
+          echo "cache_hash=$(sha1sum ./pom.xml | awk '{print $1}')" >> $GITHUB_ENV
       - *setup_jdk
+      - *maven_settings
       - name: Build with Maven
-        run: mvn -Drevision="${{ JAVA_BUILD_VERSION }}" -B clean package --file pom.xml
+        run: mvn -Drevision=${{ env.JAVA_BUILD_VERSION }} -B clean install --file pom.xml
       - name: Compress build artifact
-        run: cd target; zip -r ../build.zip *
+        run: zip -r build.zip target
       - *upload_artifact
-
-  build-java-gradle:
-    runs-on: ubuntu-latest
-    steps: !unzip
-      - run: echo "internal_build_tool=gradle" >> $GITHUB_ENV
-      - *pre
-      - *setup_jdk
-      - name: Build with Gradle
-        run: ./gradlew build
-      - name: Compress build artifact
-        run: cd build/libs; zip -r ../../build.zip *
-      - *upload_artifact
-
-  deploy-java-maven:
-    runs-on: ubuntu-latest
-    permissions:
-      packages: write
-    steps: !unzip
-      - run: echo "internal_build_tool=maven" >> $GITHUB_ENV
-      - <<: *setup_jdk
-      - name: Deploy with Maven
-        run: mvn -Drevision="${{ JAVA_BUILD_VERSION }}" -B deploy --file pom.xml
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - *upload_repo_cache
