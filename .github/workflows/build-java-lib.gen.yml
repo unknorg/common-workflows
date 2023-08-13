@@ -8,7 +8,7 @@ name: Deploy Java Library
         default: '17'
         type: string
       java-build-tool:
-        description: The build tool to use (maven or gradle)
+        description: The build tool to use (maven for now)
         required: true
         default: maven
         type: string
@@ -20,12 +20,12 @@ name: Deploy Java Library
         default: ''
         type: string
     secrets:
-      GITHUB_PAT:
-        description: Github Token.
-        required: true
+      MAVEN_SETTINGS_XML:
+        description: A custom definition of ~/.m2/settings.xml
+        required: false
 jobs:
   lint-commits:
-    runs-on: ubuntu-latest
+    runs-on: arc-systems
     steps:
       - name: Lint commits
         uses: actions-ecosystem/action-lint-commits@v1
@@ -74,12 +74,12 @@ jobs:
           exit 1
     if: ${{ github.event_name == 'pull_request' }}
   format-release-version:
-    runs-on: ubuntu-latest
+    runs-on: arc-systems
     steps:
       - name: Format release version for PR
         if: ${{ github.event_name == 'pull_request' }}
         id: pull-request
-        run: echo "version=${{ github.base_ref }}" >> $GITHUB_ENV
+        run: echo "version=${{ github.head_ref }}" >> $GITHUB_ENV
       - name: Format release version for release
         if: ${{ github.event_name != 'pull_request' }}
         id: release
@@ -89,18 +89,118 @@ jobs:
         run: echo "release_version=${{ env.version }}" >> $GITHUB_OUTPUT
     outputs:
       release_version: ${{ steps.unified.outputs.release_version }}
-  deploy-java-maven:
-    runs-on: ubuntu-latest
-    permissions:
-      packages: write
+  build-java-maven:
+    runs-on: arc-systems
     steps:
-      - run: echo "internal_build_tool=maven" >> $GITHUB_ENV
-      - name: Set up JDK ${{ JAVA_JDK_VERSION }}
+      - uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - run: >
+          echo "internal_build_tool=maven" >> $GITHUB_ENV
+
+          echo "cache_dir=~/.m2/repository" >> $GITHUB_ENV
+
+          echo "cache_hash=$(sha1sum ./pom.xml | awk '{print $1}')" >>
+          $GITHUB_ENV
+      - name: Format actions/setup-java cache
+        run: |
+          cachePkgMgr=""
+          if [[ ${{ env.USE_CUSTOM_ARTIFACT_REPO }} != "true" ]]; then
+            cachePkgMgr="${{ env.internal_build_tool }}"
+          fi
+          echo "jdk_cache=$cachePkgMgr" >> $GITHUB_ENV
+      - name: Set up JDK ${{ env.JAVA_JDK_VERSION }}
         uses: actions/setup-java@v3
         with:
-          java-version: ${{ JAVA_JDK_VERSION }}
-          cache: ${{ env.internal_build_tool }}
-      - name: Deploy with Maven
-        run: mvn -Drevision="${{ JAVA_BUILD_VERSION }}" -B deploy --file pom.xml
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          java-version: ${{ env.JAVA_JDK_VERSION }}
+          distribution: ${{ env.JAVA_JDK_DISTRIBUTION || 'corretto' }}
+          cache: ${{ env.jdk_cache }}
+      - name: Download cached dependencies
+        if: ${{ env.USE_CUSTOM_ARTIFACT_REPO == 'true' }}
+        run: >
+          mkdir -p ${{ env.cache_dir }}
+
+          cd ${{ env.cache_dir }}
+
+          cachePath="${{ env.ARTIFACT_REPO_URL }}cache/${{
+          env.internal_build_tool }}/${{ env.cache_hash }}/cached.tar.gz"
+
+          tries=0
+
+          while : ; do
+            statusCode=$(curl --write-out '%{http_code}' -o cached.tar.gz --user '${{ secrets.ARTIFACT_REPO_USER }}:${{ secrets.ARTIFACT_REPO_PASSWORD }}' $cachePath)
+            echo "Try $((++tries)) - Status code: $statusCode"
+            [[ $statusCode = "200" || $statusCode = "404" || $tries = "5" ]] && break
+          done
+
+          [[ $statusCode = "200" ]] || exit 0
+
+          tar -xzf cached.tar.gz
+
+          rm -rf cached.tar.gz
+      - name: Update settings.xml
+        run: >-
+          [ ! "${{ secrets.MAVEN_SETTINGS_XML }}"] || echo "${{
+          secrets.MAVEN_SETTINGS_XML }}" > ~/.m2/settings.xml
+      - name: Build with Maven
+        run: >-
+          mvn -Drevision=${{ env.JAVA_BUILD_VERSION }} -B clean install --file
+          pom.xml
+      - name: Compress build artifact
+        run: zip -r build.zip target
+      - name: Upload artifact using Github
+        if: ${{ env.USE_CUSTOM_ARTIFACT_REPO != 'true' }}
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ env.BUILD_ARTIFACT_NAME }}
+          path: build.zip
+      - name: Upload artifact using external service
+        if: ${{ env.USE_CUSTOM_ARTIFACT_REPO == 'true' }}
+        run: >
+          artifactPath="${{ env.ARTIFACT_REPO_URL }}github/${{ github.run_id
+          }}/${{ env.BUILD_ARTIFACT_NAME }}"
+
+          tries=0
+
+          while : ; do
+            statusCode=$(curl --write-out '%{http_code}' --silent --output /dev/null \
+            --user '${{ secrets.ARTIFACT_REPO_USER }}:${{ secrets.ARTIFACT_REPO_PASSWORD }}' \
+            --upload-file build.zip $artifactPath)
+            echo "Try $((++tries)) - Status code: $statusCode"
+            [[ $statusCode = "201" || $tries = "5" ]] && break
+          done
+
+          # Fail if statusCode is not 201 - Created
+
+          [[ $statusCode = "201" ]] || exit 1
+      - name: Upload cached dependencies
+        run: >
+          mkdir -p ${{ env.cache_dir }}
+
+          cd ${{ env.cache_dir }}
+
+          [[ -z "$(ls -A .)" ]] && exit 0
+
+
+          tar -cvzf ../cached.tar.gz .
+
+
+          cachePath="${{ env.ARTIFACT_REPO_URL }}cache/${{
+          env.internal_build_tool }}/${{ env.cache_hash }}/cached.tar.gz"
+
+          tries=0
+
+          while : ; do
+            statusCode=$(curl --write-out '%{http_code}' --silent --output /dev/null \
+            --user '${{ secrets.ARTIFACT_REPO_USER }}:${{ secrets.ARTIFACT_REPO_PASSWORD }}' \
+            --upload-file ../cached.tar.gz $cachePath)
+            echo "::debug::Try $((++tries)) - Status code: $statusCode"
+            [[ $statusCode = "201" || $tries = "5" ]] && break
+          done
+
+
+          # Warn if statusCode is not 201 - Created
+
+          [[ $statusCode = "201" ]] || echo "::warning Could not upload cache"
+    needs:
+      - format-release-version

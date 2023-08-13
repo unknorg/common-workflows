@@ -8,12 +8,14 @@ name: Dockerized Java Build
         default: '17'
         type: string
       java-build-tool:
-        description: The build tool to use (maven or gradle)
+        description: The build tool to use (maven for now)
         required: true
         default: maven
         type: string
       docker-registry:
-        description: The docker registry to push the image to (docker-hub or ghcr)
+        description: >-
+          The docker registry to push the image to (docker-hub or ghcr or
+          https://docker-repo.example/)
         required: true
         default: docker-hub
         type: string
@@ -24,19 +26,52 @@ name: Dockerized Java Build
         required: false
         default: ''
         type: string
-    secrets:
-      GITHUB_PAT:
-        description: Github token.
-        required: true
-      DOCKER_USERNAME:
-        description: Docker Hub login username. Required if docker-registry is docker-hub.
+      use-custom-artifact-repo:
+        description: >-
+          Whether to use a custom artifact repository or use GitHubs shared
+          storage
         required: false
-      DOCKER_PASSWORD:
-        description: Docker Hub login password. Required if docker-registry is docker-hub
+        default: 'false'
+        type: string
+      artifact-repo-url:
+        description: >-
+          The URL of the artifact repository (if use-custom-artifact-repo ==
+          "true")
+        required: false
+        default: ''
+        type: string
+    secrets:
+      DOCKER_REPOSITORY_USER:
+        description: >-
+          Docker repository login username. Required if the docker registry
+          requires authentication.
+        required: false
+      DOCKER_REPOSITORY_PASSWORD:
+        description: >-
+          Docker repository login password. Required if the docker registry
+          requires authentication.
+        required: false
+      ADDITIONAL_DOCKER_REPOS:
+        description: >-
+          Additional docker repositories. Must be formatted as lines of
+          "repoUrl;username;password".
+        required: false
+      MAVEN_SETTINGS_XML:
+        description: A custom definition of ~/.m2/settings.xml
+        required: false
+      ARTIFACT_REPO_USER:
+        description: >-
+          The username of the artifact repository (if use-custom-artifact-repo
+          == "true")
+        required: false
+      ARTIFACT_REPO_PASSWORD:
+        description: >-
+          The password of the artifact repository (if use-custom-artifact-repo
+          == "true")
         required: false
 jobs:
   lint-commits:
-    runs-on: ubuntu-latest
+    runs-on: arc-systems
     steps:
       - name: Lint commits
         uses: actions-ecosystem/action-lint-commits@v1
@@ -85,12 +120,12 @@ jobs:
           exit 1
     if: ${{ github.event_name == 'pull_request' }}
   format-release-version:
-    runs-on: ubuntu-latest
+    runs-on: arc-systems
     steps:
       - name: Format release version for PR
         if: ${{ github.event_name == 'pull_request' }}
         id: pull-request
-        run: echo "version=${{ github.base_ref }}" >> $GITHUB_ENV
+        run: echo "version=${{ github.head_ref }}" >> $GITHUB_ENV
       - name: Format release version for release
         if: ${{ github.event_name != 'pull_request' }}
         id: release
@@ -101,117 +136,318 @@ jobs:
     outputs:
       release_version: ${{ steps.unified.outputs.release_version }}
   mvn-build-java:
-    runs-on: ubuntu-latest
+    runs-on: arc-systems
     steps:
-      - run: echo "internal_build_tool=maven" >> $GITHUB_ENV
       - uses: actions/checkout@v3
-      - name: Set up JDK ${{ JAVA_JDK_VERSION }}
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - run: >
+          echo "internal_build_tool=maven" >> $GITHUB_ENV
+
+          echo "cache_dir=~/.m2/repository" >> $GITHUB_ENV
+
+          echo "cache_hash=$(sha1sum ./pom.xml | awk '{print $1}')" >>
+          $GITHUB_ENV
+      - name: Format actions/setup-java cache
+        run: |
+          cachePkgMgr=""
+          if [[ ${{ env.USE_CUSTOM_ARTIFACT_REPO }} != "true" ]]; then
+            cachePkgMgr="${{ env.internal_build_tool }}"
+          fi
+          echo "jdk_cache=$cachePkgMgr" >> $GITHUB_ENV
+      - name: Set up JDK ${{ env.JAVA_JDK_VERSION }}
         uses: actions/setup-java@v3
         with:
-          java-version: ${{ JAVA_JDK_VERSION }}
-          cache: ${{ env.internal_build_tool }}
+          java-version: ${{ env.JAVA_JDK_VERSION }}
+          distribution: ${{ env.JAVA_JDK_DISTRIBUTION || 'corretto' }}
+          cache: ${{ env.jdk_cache }}
+      - name: Download cached dependencies
+        if: ${{ env.USE_CUSTOM_ARTIFACT_REPO == 'true' }}
+        run: >
+          mkdir -p ${{ env.cache_dir }}
+
+          cd ${{ env.cache_dir }}
+
+          cachePath="${{ env.ARTIFACT_REPO_URL }}cache/${{
+          env.internal_build_tool }}/${{ env.cache_hash }}/cached.tar.gz"
+
+          tries=0
+
+          while : ; do
+            statusCode=$(curl --write-out '%{http_code}' -o cached.tar.gz --user '${{ secrets.ARTIFACT_REPO_USER }}:${{ secrets.ARTIFACT_REPO_PASSWORD }}' $cachePath)
+            echo "Try $((++tries)) - Status code: $statusCode"
+            [[ $statusCode = "200" || $statusCode = "404" || $tries = "5" ]] && break
+          done
+
+          [[ $statusCode = "200" ]] || exit 0
+
+          tar -xzf cached.tar.gz
+
+          rm -rf cached.tar.gz
+      - name: Update settings.xml
+        run: >-
+          [ ! "${{ secrets.MAVEN_SETTINGS_XML }}"] || echo "${{
+          secrets.MAVEN_SETTINGS_XML }}" > ~/.m2/settings.xml
       - name: Build with Maven
         run: >-
-          mvn -Drevision="${{ JAVA_BUILD_VERSION }}" -B clean package --file
+          mvn -Drevision=${{ env.JAVA_BUILD_VERSION }} -B clean install --file
           pom.xml
       - name: Compress build artifact
-        run: cd target; zip -r ../build.zip *
-      - name: Upload artifact
+        run: zip -r build.zip target
+      - name: Upload artifact using Github
+        if: ${{ env.USE_CUSTOM_ARTIFACT_REPO != 'true' }}
         uses: actions/upload-artifact@v3
         with:
-          name: ${{ BUILD_ARTIFACT_NAME }}
+          name: ${{ env.BUILD_ARTIFACT_NAME }}
           path: build.zip
-    if: ${{ env.JAVA_BUILD_TOOL == 'maven' }}
+      - name: Upload artifact using external service
+        if: ${{ env.USE_CUSTOM_ARTIFACT_REPO == 'true' }}
+        run: >
+          artifactPath="${{ env.ARTIFACT_REPO_URL }}github/${{ github.run_id
+          }}/${{ env.BUILD_ARTIFACT_NAME }}"
+
+          tries=0
+
+          while : ; do
+            statusCode=$(curl --write-out '%{http_code}' --silent --output /dev/null \
+            --user '${{ secrets.ARTIFACT_REPO_USER }}:${{ secrets.ARTIFACT_REPO_PASSWORD }}' \
+            --upload-file build.zip $artifactPath)
+            echo "Try $((++tries)) - Status code: $statusCode"
+            [[ $statusCode = "201" || $tries = "5" ]] && break
+          done
+
+          # Fail if statusCode is not 201 - Created
+
+          [[ $statusCode = "201" ]] || exit 1
+      - name: Upload cached dependencies
+        run: >
+          mkdir -p ${{ env.cache_dir }}
+
+          cd ${{ env.cache_dir }}
+
+          [[ -z "$(ls -A .)" ]] && exit 0
+
+
+          tar -cvzf ../cached.tar.gz .
+
+
+          cachePath="${{ env.ARTIFACT_REPO_URL }}cache/${{
+          env.internal_build_tool }}/${{ env.cache_hash }}/cached.tar.gz"
+
+          tries=0
+
+          while : ; do
+            statusCode=$(curl --write-out '%{http_code}' --silent --output /dev/null \
+            --user '${{ secrets.ARTIFACT_REPO_USER }}:${{ secrets.ARTIFACT_REPO_PASSWORD }}' \
+            --upload-file ../cached.tar.gz $cachePath)
+            echo "::debug::Try $((++tries)) - Status code: $statusCode"
+            [[ $statusCode = "201" || $tries = "5" ]] && break
+          done
+
+
+          # Warn if statusCode is not 201 - Created
+
+          [[ $statusCode = "201" ]] || echo "::warning Could not upload cache"
+    needs:
+      - format-release-version
+    if: ${{ inputs.java-build-tool == 'maven' }}
     env:
       JAVA_JDK_VERSION: ${{ inputs.jdk-version }}
-      JAVA_BUILD_VERSION: ${{ needs.format-release-version.outputs.release-version }}
-      BUILD_ARTIFACT_NAME: ${{ needs.format-release-version.outputs.release-version }}
-  gradle-build-java:
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "internal_build_tool=gradle" >> $GITHUB_ENV
-      - uses: actions/checkout@v3
-      - name: Set up JDK ${{ JAVA_JDK_VERSION }}
-        uses: actions/setup-java@v3
-        with:
-          java-version: ${{ JAVA_JDK_VERSION }}
-          cache: ${{ env.internal_build_tool }}
-      - name: Build with Gradle
-        run: ./gradlew build
-      - name: Compress build artifact
-        run: cd build/libs; zip -r ../../build.zip *
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: ${{ BUILD_ARTIFACT_NAME }}
-          path: build.zip
-    if: ${{ env.JAVA_BUILD_TOOL == 'gradle' }}
-    env:
-      JAVA_JDK_VERSION: ${{ inputs.jdk-version }}
-      JAVA_BUILD_VERSION: ${{ needs.format-release-version.outputs.release-version }}
-      BUILD_ARTIFACT_NAME: ${{ needs.format-release-version.outputs.release-version }}
+      JAVA_BUILD_TOOL: ${{ inputs.java-build-tool }}
+      JAVA_BUILD_VERSION: ${{ needs.format-release-version.outputs.release_version }}
+      BUILD_ARTIFACT_NAME: ${{ needs.format-release-version.outputs.release_version }}
+      USE_CUSTOM_ARTIFACT_REPO: ${{ inputs.use-custom-artifact-repo }}
+      ARTIFACT_REPO_URL: ${{ inputs.artifact-repo-url }}
   build-docker-hub:
-    runs-on: ubuntu-latest
+    runs-on: arc-systems
     steps:
-      - run: echo "internal_docker_name=${{ DOCKER_IMAGE_NAME }}" >> $GITHUB_ENV
-      - uses: actions/checkout@v3
-      - uses: actions/download-artifact@v3
+      - run: >-
+          echo "internal_docker_name=${{ env.DOCKER_IMAGE_NAME }}" >>
+          $GITHUB_ENV
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
         with:
-          name: ${{ BUILD_ARTIFACT_NAME }}
+          username: ${{ secrets.DOCKER_REPOSITORY_USER }}
+          password: ${{ secrets.DOCKER_REPOSITORY_PASSWORD }}
+      - name: Register additional repositories
+        run: |
+          echo "${{ secrets.ADDITIONAL_DOCKER_REPOS }}" | while read line
+          do
+            IFS=';' read -r -a array <<< "$line"
+            docker login ${array[0]} -u ${array[1]} -p ${array[2]}
+          done
+      - uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download artifact using Github
+        uses: actions/download-artifact@v3
+        if: ${{ env.USE_CUSTOM_ARTIFACT_REPO != 'true' }}
+        with:
+          name: ${{ env.BUILD_ARTIFACT_NAME }}
           path: build.zip
+      - name: Download artifact using external service
+        if: ${{ env.USE_CUSTOM_ARTIFACT_REPO == 'true' }}
+        run: >
+          artifactPath="${{ env.ARTIFACT_REPO_URL }}github/${{ github.run_id
+          }}/${{ env.BUILD_ARTIFACT_NAME }}"
+
+          tries=0
+
+          while : ; do
+            statusCode=$(curl --write-out '%{http_code}' -o build.zip --user '${{ secrets.ARTIFACT_REPO_USER }}:${{ secrets.ARTIFACT_REPO_PASSWORD }}' $artifactPath)
+            echo "Try $((++tries)) - Status code: $statusCode"
+            [[ $statusCode = "200" || $tries = "5" ]] && break
+          done
+
+          # Fail if statusCode is not 200 - OK
+
+          [[ $statusCode = "200" ]] || exit 1
       - name: Unzip build artifact
         run: unzip build.zip
       - name: Build Docker image
         run: docker build -t ${{ env.internal_docker_name }} .
-      - name: Login to Docker Hub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
       - name: Push Docker image
         run: docker push ${{ env.internal_docker_name }}
     needs:
+      - format-release-version
       - mvn-build-java
-      - gradle-build-java
     if: |
       always() &&
       contains(needs.*.result, 'success') &&
       inputs.docker-registry == 'docker-hub'
     env:
+      DOCKER_IMAGE_TAG: ${{ needs.format-release-version.outputs.release_version }}
       DOCKER_REGISTRY: ${{ inputs.docker-registry }}
-      BUILD_ARTIFACT_NAME: ${{ needs.format-release-version.outputs.release-version }}
-      DOCKER_IMAGE_TAG: ${{ needs.format-release-version.outputs.release-version }}
+      BUILD_ARTIFACT_NAME: ${{ needs.format-release-version.outputs.release_version }}
+      USE_CUSTOM_ARTIFACT_REPO: ${{ inputs.use-custom-artifact-repo }}
+      ARTIFACT_REPO_URL: ${{ inputs.artifact-repo-url }}
   build-docker-ghcr:
-    runs-on: ubuntu-latest
+    runs-on: arc-systems
     steps:
       - run: >-
-          echo "internal_docker_name=ghcr.io/${{ github.actor }}/${{
-          github.repository }}:${{ DOCKER_IMAGE_TAG }}" >> $GITHUB_ENV
-      - uses: actions/checkout@v3
-      - uses: actions/download-artifact@v3
-        with:
-          name: ${{ BUILD_ARTIFACT_NAME }}
-          path: build.zip
-      - name: Unzip build artifact
-        run: unzip build.zip
-      - name: Build Docker image
-        run: docker build -t ${{ env.internal_docker_name }} .
+          echo "ghcr.io/${{ github.repository }}:${{ env.DOCKER_IMAGE_TAG }}" |
+          awk '{ print "internal_docker_name="tolower($0) }' >> $GITHUB_ENV
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v2
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Register additional repositories
+        run: |
+          echo "${{ secrets.ADDITIONAL_DOCKER_REPOS }}" | while read line
+          do
+            IFS=';' read -r -a array <<< "$line"
+            docker login ${array[0]} -u ${array[1]} -p ${array[2]}
+          done
+      - uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download artifact using Github
+        uses: actions/download-artifact@v3
+        if: ${{ env.USE_CUSTOM_ARTIFACT_REPO != 'true' }}
+        with:
+          name: ${{ env.BUILD_ARTIFACT_NAME }}
+          path: build.zip
+      - name: Download artifact using external service
+        if: ${{ env.USE_CUSTOM_ARTIFACT_REPO == 'true' }}
+        run: >
+          artifactPath="${{ env.ARTIFACT_REPO_URL }}github/${{ github.run_id
+          }}/${{ env.BUILD_ARTIFACT_NAME }}"
+
+          tries=0
+
+          while : ; do
+            statusCode=$(curl --write-out '%{http_code}' -o build.zip --user '${{ secrets.ARTIFACT_REPO_USER }}:${{ secrets.ARTIFACT_REPO_PASSWORD }}' $artifactPath)
+            echo "Try $((++tries)) - Status code: $statusCode"
+            [[ $statusCode = "200" || $tries = "5" ]] && break
+          done
+
+          # Fail if statusCode is not 200 - OK
+
+          [[ $statusCode = "200" ]] || exit 1
+      - name: Unzip build artifact
+        run: unzip build.zip
+      - name: Build Docker image
+        run: docker build -t ${{ env.internal_docker_name }} .
       - name: Push Docker image
         run: docker push ${{ env.internal_docker_name }}
     needs:
+      - format-release-version
       - mvn-build-java
-      - gradle-build-java
     if: |
       always() &&
       contains(needs.*.result, 'success') &&
       inputs.docker-registry == 'ghcr'
     env:
+      DOCKER_IMAGE_TAG: ${{ needs.format-release-version.outputs.release_version }}
       DOCKER_REGISTRY: ${{ inputs.docker-registry }}
-      BUILD_ARTIFACT_NAME: ${{ needs.format-release-version.outputs.release-version }}
-      DOCKER_IMAGE_TAG: ${{ needs.format-release-version.outputs.release-version }}
+      BUILD_ARTIFACT_NAME: ${{ needs.format-release-version.outputs.release_version }}
+      USE_CUSTOM_ARTIFACT_REPO: ${{ inputs.use-custom-artifact-repo }}
+      ARTIFACT_REPO_URL: ${{ inputs.artifact-repo-url }}
+  build-docker-custom:
+    runs-on: arc-systems
+    steps:
+      - run: >-
+          echo "${{ env.DOCKER_REGISTRY }}/${{ github.repository }}:${{
+          env.DOCKER_IMAGE_TAG }}" | awk '{ print
+          "internal_docker_name="tolower($0) }' >> $GITHUB_ENV
+      - name: Login to the Docker Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ secrets.DOCKER_REPOSITORY_USER }}
+          password: ${{ secrets.DOCKER_REPOSITORY_PASSWORD }}
+      - name: Register additional repositories
+        run: |
+          echo "${{ secrets.ADDITIONAL_DOCKER_REPOS }}" | while read line
+          do
+            IFS=';' read -r -a array <<< "$line"
+            docker login ${array[0]} -u ${array[1]} -p ${array[2]}
+          done
+      - uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download artifact using Github
+        uses: actions/download-artifact@v3
+        if: ${{ env.USE_CUSTOM_ARTIFACT_REPO != 'true' }}
+        with:
+          name: ${{ env.BUILD_ARTIFACT_NAME }}
+          path: build.zip
+      - name: Download artifact using external service
+        if: ${{ env.USE_CUSTOM_ARTIFACT_REPO == 'true' }}
+        run: >
+          artifactPath="${{ env.ARTIFACT_REPO_URL }}github/${{ github.run_id
+          }}/${{ env.BUILD_ARTIFACT_NAME }}"
+
+          tries=0
+
+          while : ; do
+            statusCode=$(curl --write-out '%{http_code}' -o build.zip --user '${{ secrets.ARTIFACT_REPO_USER }}:${{ secrets.ARTIFACT_REPO_PASSWORD }}' $artifactPath)
+            echo "Try $((++tries)) - Status code: $statusCode"
+            [[ $statusCode = "200" || $tries = "5" ]] && break
+          done
+
+          # Fail if statusCode is not 200 - OK
+
+          [[ $statusCode = "200" ]] || exit 1
+      - name: Unzip build artifact
+        run: unzip build.zip
+      - name: Build Docker image
+        run: docker build -t ${{ env.internal_docker_name }} .
+      - name: Push Docker image
+        run: docker push ${{ env.internal_docker_name }}
+    needs:
+      - format-release-version
+      - mvn-build-java
+    if: |
+      always() &&
+      contains(needs.*.result, 'success') &&
+      inputs.docker-registry != 'docker-hub' && 
+      inputs.docker-registry != 'ghcr'
+    env:
+      DOCKER_IMAGE_TAG: ${{ needs.format-release-version.outputs.release_version }}
+      DOCKER_REGISTRY: ${{ inputs.docker-registry }}
+      BUILD_ARTIFACT_NAME: ${{ needs.format-release-version.outputs.release_version }}
+      USE_CUSTOM_ARTIFACT_REPO: ${{ inputs.use-custom-artifact-repo }}
+      ARTIFACT_REPO_URL: ${{ inputs.artifact-repo-url }}
