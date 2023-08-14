@@ -1,0 +1,37 @@
+name: Create Tag
+'on':
+  workflow_call: {}
+jobs:
+  format-semantic-version:
+    runs-on: arc-systems
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - uses: paulhatch/semantic-version@v5.0.2
+        id: semver
+        with:
+          tag_prefix: ''
+          major_pattern: 'BREAKING CHANGE:'
+          major_regexp_flags: i
+          minor_pattern: 'feat(.+):'
+          minor_regexp_flags: ''
+          version_format: ${major}.${minor}.${patch}-prerelease${increment}
+          bump_each_commit: false
+          search_commit_body: true
+          enable_prerelease_mode: true
+    outputs:
+      semantic_version: ${{ steps.semver.outputs.version_tag }}
+  create-tag:
+    needs:
+      - format-semantic-version
+    runs-on: arc-systems
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v3
+      - uses: rickstaa/action-create-tag@v1
+        id: tag_create
+        with:
+          tag: ${{needs.format-semantic-version.outputs.semantic_version}}
+          tag_exists_error: true
