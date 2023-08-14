@@ -1,0 +1,25 @@
+# This workflow creates a Git Tag with an auto generated semantic version.
+
+name: Create Tag
+on:
+  workflow_call: {}
+
+imports:
+  - 'templates/format.yml'
+
+jobs:
+  format-semantic-version:
+    extends: format/semantic-version
+
+  create-tag:
+    needs: [format-semantic-version]
+    runs-on: arc-systems
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v3
+      - uses: rickstaa/action-create-tag@v1
+        id: "tag_create"
+        with:
+          tag: ${{needs.format-semantic-version.outputs.semantic_version}}
+          tag_exists_error: true
