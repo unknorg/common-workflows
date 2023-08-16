@@ -135,6 +135,8 @@ jobs:
         run: echo "release_version=${{ env.version }}" >> $GITHUB_OUTPUT
     outputs:
       release_version: ${{ steps.unified.outputs.release_version }}
+    env:
+      RELEASE_VERSION: ${{ inputs.release-version }}
   mvn-build-java:
     runs-on: arc-systems
     steps:

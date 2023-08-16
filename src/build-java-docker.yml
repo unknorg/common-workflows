@@ -94,6 +94,8 @@ jobs:
 
   format-release-version:
     extends: format/release-version
+    env:
+      RELEASE_VERSION: ${{ inputs.release-version }}
 
   mvn-build-java:
     needs: [format-release-version]
