@@ -45,6 +45,20 @@ on:
         required: false
         default: ''
         type: string
+      helm-registry:
+        description: 'The helm registry URL'
+        required: true
+        type: string
+      helm-chart-root:
+        description: 'The directory containing the chart directory'
+        required: false
+        default: 'helm'
+        type: string
+      helm-chart-directory:
+        description: 'The directory of the chart (where Chart.yaml is), relative to inputs.helm-chart-root'
+        required: false
+        default: 'chart'
+        type: string
     secrets:
       DOCKER_REPOSITORY_USER:
         description: 'Docker repository login username. Required if the docker registry requires authentication.'
@@ -64,12 +78,19 @@ on:
       ARTIFACT_REPO_PASSWORD:
         description: 'The password of the artifact repository (if use-custom-artifact-repo == "true")'
         required: false
+      HELM_REGISTRY_USERNAME:
+        description: 'The helm registry username'
+        required: true
+      HELM_REGISTRY_PASSWORD:
+        description: 'The helm registry password'
+        required: true
 
 imports:
   - 'templates/linter.yml'
   - 'templates/java.yml'
   - 'templates/docker.yml'
   - 'templates/format.yml'
+  - 'templates/helm.yml'
 
 internals:
   common-envs: &common_envs
@@ -87,6 +108,14 @@ internals:
     DOCKER_IMAGE_TAG: ${{ needs.format-release-version.outputs.release_version }}
     DOCKER_REGISTRY: ${{ inputs.docker-registry }}
     <<: *common_envs
+
+  helm-envs: &helm_envs
+    HELM_REGISTRY_URL: ${{ inputs.helm-registry }}
+    HELM_CHART_ROOT: ${{ inputs.helm-chart-root }}
+    HELM_CHART_DIR: ${{ inputs.helm-chart-directory }}
+    HELM_CHART_VERSION: ${{ needs.format-release-version.outputs.release_version }}
+
+
 jobs:
   lint-commits:
     if: ${{ github.event_name == 'pull_request' }}
@@ -135,3 +164,11 @@ jobs:
     env:
       <<: *docker_envs
     extends: docker/build-docker-custom
+
+  # For now supporting custom
+  build-helm-custom:
+    needs: [format-release-version, build-docker-custom]
+    env:
+      <<: *helm_envs
+      HELM_VALUES_IMAGE: ${{ needs.build-docker-custom.outputs.docker_image }}
+    extends: helm/push-chart
