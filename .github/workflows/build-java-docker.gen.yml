@@ -40,6 +40,22 @@ name: Dockerized Java Build
         required: false
         default: ''
         type: string
+      helm-registry:
+        description: The helm registry URL
+        required: true
+        type: string
+      helm-chart-root:
+        description: The directory containing the chart directory
+        required: false
+        default: helm
+        type: string
+      helm-chart-directory:
+        description: >-
+          The directory of the chart (where Chart.yaml is), relative to
+          inputs.helm-chart-root
+        required: false
+        default: chart
+        type: string
     secrets:
       DOCKER_REPOSITORY_USER:
         description: >-
@@ -69,6 +85,12 @@ name: Dockerized Java Build
           The password of the artifact repository (if use-custom-artifact-repo
           == "true")
         required: false
+      HELM_REGISTRY_USERNAME:
+        description: The helm registry username
+        required: true
+      HELM_REGISTRY_PASSWORD:
+        description: The helm registry password
+        required: true
 jobs:
   lint-commits:
     runs-on: arc-systems
@@ -310,6 +332,11 @@ jobs:
         run: docker build -t ${{ env.internal_docker_name }} .
       - name: Push Docker image
         run: docker push ${{ env.internal_docker_name }}
+      - name: Job outputs
+        id: outputs
+        run: echo "docker_image=${{ env.internal_docker_name }}" >> $GITHUB_OUTPUT
+    outputs:
+      docker_image: ${{ steps.outputs.outputs.docker_image }}
     needs:
       - format-release-version
       - mvn-build-java
@@ -374,6 +401,11 @@ jobs:
         run: docker build -t ${{ env.internal_docker_name }} .
       - name: Push Docker image
         run: docker push ${{ env.internal_docker_name }}
+      - name: Job outputs
+        id: outputs
+        run: echo "docker_image=${{ env.internal_docker_name }}" >> $GITHUB_OUTPUT
+    outputs:
+      docker_image: ${{ steps.outputs.outputs.docker_image }}
     needs:
       - format-release-version
       - mvn-build-java
@@ -439,6 +471,11 @@ jobs:
         run: docker build -t ${{ env.internal_docker_name }} .
       - name: Push Docker image
         run: docker push ${{ env.internal_docker_name }}
+      - name: Job outputs
+        id: outputs
+        run: echo "docker_image=${{ env.internal_docker_name }}" >> $GITHUB_OUTPUT
+    outputs:
+      docker_image: ${{ steps.outputs.outputs.docker_image }}
     needs:
       - format-release-version
       - mvn-build-java
@@ -453,3 +490,65 @@ jobs:
       BUILD_ARTIFACT_NAME: ${{ needs.format-release-version.outputs.release_version }}
       USE_CUSTOM_ARTIFACT_REPO: ${{ inputs.use-custom-artifact-repo }}
       ARTIFACT_REPO_URL: ${{ inputs.artifact-repo-url }}
+  build-helm-custom:
+    runs-on: arc-systems
+    steps:
+      - uses: actions/checkout@v3
+      - uses: azure/setup-helm@v3
+        with:
+          version: v3.11.1
+      - name: Add registry to helm
+        run: >-
+          helm registry login -u ${{ secrets.HELM_REGISTRY_USERNAME }} -p ${{
+          secrets.HELM_REGISTRY_PASSWORD }} ${{ env.HELM_REGISTRY_URL }}
+      - name: Format chart name
+        run: >-
+          echo "chart_name=$(echo ${{ github.event.repository.name }} | awk
+          '{print tolower($0)}' | tr '_' '-')" >> $GITHUB_ENV
+      - name: Format chart versions
+        run: |
+          if [[ "${{ github.event_name }}" = "pull_request" ]]; then
+            commitSHA=${{ github.sha }}
+            echo "chart_version=0.0.0-${{ env.HELM_CHART_VERSION }}-${commitSHA::8}" >> $GITHUB_ENV
+            echo "chart_app_version=${{ env.HELM_CHART_VERSION }}-${commitSHA::8}" >> $GITHUB_ENV
+          else
+            semverRegex='^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$'
+            (echo "${{ env.HELM_CHART_VERSION }}" | grep -Eq $semverRegex) \
+              || (echo "::error::Expecting '${{ env.HELM_CHART_VERSION }}' to be a valid semantic version" && exit 1)
+            echo "chart_version=${{ env.HELM_CHART_VERSION }}" >> $GITHUB_ENV
+            echo "chart_app_version=${{ env.HELM_CHART_VERSION }}" >> $GITHUB_ENV
+          fi
+      - name: Replace chart and values with latest versions
+        run: >
+          chartFile="${{ env.HELM_CHART_ROOT || 'helm' }}/${{
+          env.HELM_CHART_NAME || 'chart' }}/Chart.yaml"
+
+          valuesFile="${{ env.HELM_CHART_ROOT || 'helm' }}/${{
+          env.HELM_CHART_NAME || 'chart' }}/values.yaml"
+
+          yq -Y --in-place '.name = "${{ env.chart_name }}"' $chartFile
+
+          yq -Y --in-place '.version = "${{ env.chart_version }}"' $chartFile
+
+          yq -Y --in-place '.appVersion = "${{ env.chart_app_version }}"'
+          $chartFile
+
+          [ ! "${{ env.HELM_VALUES_IMAGE }}" ] || yq -Y --in-place '.image.name
+          = "${{ env.HELM_VALUES_IMAGE }}"' $valuesFile
+      - name: Package and push chart to registry
+        run: >
+          cd ${{ env.HELM_CHART_ROOT || 'helm' }}
+
+          helm package ${{ env.HELM_CHART_NAME || 'chart' }}
+
+          helm push ${{ env.chart_name }}-${{ env.chart_version }}.tgz oci://${{
+          env.HELM_REGISTRY_URL }}/${{ github.repository_owner }}
+    needs:
+      - format-release-version
+      - build-docker-custom
+    env:
+      HELM_REGISTRY_URL: ${{ inputs.helm-registry }}
+      HELM_CHART_ROOT: ${{ inputs.helm-chart-root }}
+      HELM_CHART_DIR: ${{ inputs.helm-chart-directory }}
+      HELM_CHART_VERSION: ${{ needs.format-release-version.outputs.release_version }}
+      HELM_VALUES_IMAGE: ${{ needs.build-docker-custom.outputs.docker_image }}
