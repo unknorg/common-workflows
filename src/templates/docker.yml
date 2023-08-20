@@ -52,6 +52,11 @@ internals:
       run: docker build -t ${{ env.internal_docker_name }} .
     - name: Push Docker image
       run: docker push ${{ env.internal_docker_name }}
+    - name: Job outputs
+      id: outputs
+      run: echo "docker_image=${{ env.internal_docker_name }}" >> $GITHUB_OUTPUT
+  - job-outputs: &job_output
+      docker_image: ${{ steps.outputs.outputs.docker_image }}
 
 jobs:
   build-docker-hub:
@@ -64,6 +69,7 @@ jobs:
           username: ${{ secrets.DOCKER_REPOSITORY_USER }}
           password: ${{ secrets.DOCKER_REPOSITORY_PASSWORD }}
       - *build_image
+    outputs: *job_output
   build-docker-ghcr:
     runs-on: arc-systems
     steps: !unzip
@@ -75,6 +81,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - *build_image
+    outputs: *job_output
   build-docker-custom:
     runs-on: arc-systems
     steps: !unzip
@@ -86,3 +93,4 @@ jobs:
           username: ${{ secrets.DOCKER_REPOSITORY_USER }}
           password: ${{ secrets.DOCKER_REPOSITORY_PASSWORD }}
       - *build_image
+    outputs: *job_output

@@ -1,0 +1,53 @@
+# Needs:
+## ENVIRONMENT VARIABLES:
+# - HELM_REGISTRY_URL: The helm registry URL.
+# - secrets.HELM_REGISTRY_USERNAME: The helm registry username.
+# - secrets.HELM_REGISTRY_PASSWORD: The helm registry password.
+# jobs.push-chart:
+#   - HELM_CHART_ROOT: The directory containing the chart directory, defaults to "helm"
+#   - HELM_CHART_DIR: The directory of the chart (where Chart.yaml is), relative to HELM_CHART_ROOT, defaults to "chart"
+#   - HELM_CHART_VERSION: The version of the chart. Ignored if running from pull request"
+#   - HELM_VALUES_IMAGE (Optional): The docker image to use in the chart.
+
+internals:
+  pre-helm: &pre_helm !zipped
+    - uses: actions/checkout@v3
+    - uses: azure/setup-helm@v3
+      with:
+        version: 'v3.11.1'
+    - name: Add registry to helm
+      run: helm registry login -u ${{ secrets.HELM_REGISTRY_USERNAME }} -p ${{ secrets.HELM_REGISTRY_PASSWORD }} ${{ env.HELM_REGISTRY_URL }}
+
+jobs:
+  push-chart:
+    runs-on: arc-systems
+    steps: !unzip
+      - *pre_helm
+      - name: Format chart name
+        run: echo "chart_name=$(echo ${{ github.event.repository.name }} | awk '{print tolower($0)}' | tr '_' '-')" >> $GITHUB_ENV
+      - name: Format chart versions
+        run: |
+          if [[ "${{ github.event_name }}" = "pull_request" ]]; then
+            commitSHA=${{ github.sha }}
+            echo "chart_version=0.0.0-${{ env.HELM_CHART_VERSION }}-${commitSHA::8}" >> $GITHUB_ENV
+            echo "chart_app_version=${{ env.HELM_CHART_VERSION }}-${commitSHA::8}" >> $GITHUB_ENV
+          else
+            semverRegex='^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$'
+            (echo "${{ env.HELM_CHART_VERSION }}" | grep -Eq $semverRegex) \
+              || (echo "::error::Expecting '${{ env.HELM_CHART_VERSION }}' to be a valid semantic version" && exit 1)
+            echo "chart_version=${{ env.HELM_CHART_VERSION }}" >> $GITHUB_ENV
+            echo "chart_app_version=${{ env.HELM_CHART_VERSION }}" >> $GITHUB_ENV
+          fi
+      - name: Replace chart and values with latest versions
+        run: |
+          chartFile="${{ env.HELM_CHART_ROOT || 'helm' }}/${{ env.HELM_CHART_NAME || 'chart' }}/Chart.yaml"
+          valuesFile="${{ env.HELM_CHART_ROOT || 'helm' }}/${{ env.HELM_CHART_NAME || 'chart' }}/values.yaml"
+          yq -Y --in-place '.name = "${{ env.chart_name }}"' $chartFile
+          yq -Y --in-place '.version = "${{ env.chart_version }}"' $chartFile
+          yq -Y --in-place '.appVersion = "${{ env.chart_app_version }}"' $chartFile
+          [ ! "${{ env.HELM_VALUES_IMAGE }}" ] || yq -Y --in-place '.image.name = "${{ env.HELM_VALUES_IMAGE }}"' $valuesFile
+      - name: Package and push chart to registry
+        run: |
+          cd ${{ env.HELM_CHART_ROOT || 'helm' }}
+          helm package ${{ env.HELM_CHART_NAME || 'chart' }}
+          helm push ${{ env.chart_name }}-${{ env.chart_version }}.tgz oci://${{ env.HELM_REGISTRY_URL }}/${{ github.repository_owner }}
