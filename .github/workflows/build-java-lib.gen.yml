@@ -79,7 +79,17 @@ jobs:
       - name: Format release version for PR
         if: ${{ github.event_name == 'pull_request' }}
         id: pull-request
-        run: echo "version=${{ github.head_ref }}" >> $GITHUB_ENV
+        run: |
+          head_ref=${{ github.head_ref }}
+          if [[ $head_ref == "dependabot"* ]]; then
+            echo "::debug::Dependabot branch, selecting the last part as the version."
+            echo "version=${head_ref##*/}" >> $GITHUB_ENV
+            exit 0
+          elif [[ ! $head_ref =~ ^[a-z0-9_\.\-]+$ ]]; then
+            echo "::error::Branch name does not respect regex [a-z0-9_\\.\\-]"
+            exit 1
+          fi
+          echo "version=$head_ref" >> $GITHUB_ENV
       - name: Format release version for release
         if: ${{ github.event_name != 'pull_request' }}
         id: release
