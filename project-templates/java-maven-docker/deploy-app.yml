@@ -1,0 +1,47 @@
+name: Build Java using Maven
+on:
+  pull_request:
+    types: [ opened, synchronize, labeled ]
+    branches:
+      - main
+  push:
+    tags:
+      - '*'
+
+jobs:
+  # Since dependabot does not have access to secrets, there is actually no need to run this workflow because
+  # it is a guaranteed failure.
+  # The idea behind restricting secrets access to dependabot makes perfect sense, thus the necessity to have a
+  # maintainer run manually dependabot PR workflows by adding a label to the PR itself.
+  # For more information: https://github.com/dependabot/dependabot-core/issues/3253#issuecomment-852541544
+  prevent-dependabot:
+    runs-on: ubuntu-latest
+    steps:
+      - if: ${{ github.actor == 'dependabot[bot]' }}
+        run: |
+          echo "::error::Dependabot is not allowed to run workflows, please label this PR to trigger the workflow"
+          exit 1
+
+  common-build-java:
+    permissions:
+      contents: read
+      pull-requests: write
+    needs: [ prevent-dependabot ]
+    uses: unknorg/common-workflows/.github/workflows/build-java-docker.gen.yml@v0.4.1
+    with:
+      jdk-version: 17
+      java-build-tool: maven
+      docker-registry: ${{ vars.NEXUS_DOCKER_REGISTRY }}
+      use-custom-artifact-repo: true
+      artifact-repo-url: ${{ vars.NEXUS_CI_RAW_REPO }}
+      release-version: ${{ github.ref_name }}
+      helm-registry: ${{ vars.NEXUS_HELM_REGISTRY }}
+    secrets:
+      DOCKER_REPOSITORY_USER: ${{ secrets.NEXUS_CI_ADMIN_USER }}
+      DOCKER_REPOSITORY_PASSWORD: ${{ secrets.NEXUS_CI_ADMIN_PASSWORD }}
+      HELM_REGISTRY_USERNAME: ${{ secrets.NEXUS_CI_ADMIN_USER }}
+      HELM_REGISTRY_PASSWORD: ${{ secrets.NEXUS_CI_ADMIN_PASSWORD }}
+      ADDITIONAL_DOCKER_REPOS: ${{ secrets.ADDITIONAL_DOCKER_REPOS }}
+      MAVEN_SETTINGS_XML: ${{ secrets.MAVEN_SETTINGS_XML }}
+      ARTIFACT_REPO_USER: ${{ secrets.NEXUS_CI_ADMIN_USER }}
+      ARTIFACT_REPO_PASSWORD: ${{ secrets.NEXUS_CI_ADMIN_PASSWORD }}
