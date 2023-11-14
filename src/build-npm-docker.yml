@@ -1,0 +1,164 @@
+# This workflow builds a Node container and pushes it to a docker registry.
+# Currently supporting npm only, and docker hub and ghcr for docker registry.
+# Needs:
+## PERMISSIONS:
+# - if running from a pull request:
+#   - pull-requests: write (from templates/linter.yml)
+
+# - USE_CUSTOM_ARTIFACT_REPO (Optional): Whether to use a custom artifact repository or use GitHub's shared storage.
+# - if USE_CUSTOM_ARTIFACT_REPO is 'true':
+# -   ARTIFACT_REPO_URL (Optional): The URL of the artifact repository (if USE_CUSTOM_ARTIFACT_REPO == true).
+# -   secrets.ARTIFACT_REPO_USER (Optional): The username of the artifact repository (if USE_CUSTOM_ARTIFACT_REPO == true).
+# -   secrets.ARTIFACT_REPO_PASSWORD (Optional): The password of the artifact repository (if USE_CUSTOM_ARTIFACT_REPO == true).
+
+name: Dockerized Node Build
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: 'The node version to use (18, 16, 16.15.1, ...)'
+        required: true
+        default: '18'
+        type: string
+      docker-registry:
+        description: 'The docker registry to push the image to (docker-hub or ghcr or https://docker-repo.example/)'
+        required: true
+        default: 'docker-hub'
+        type: string
+      release-version:
+        description: 'Release version to tag the docker image with. Ignored if running from a pull request.'
+        required: false
+        default: ''
+        type: string
+      use-custom-artifact-repo:
+        description: 'Whether to use a custom artifact repository or use GitHubs shared storage'
+        required: false
+        default: 'false'
+        type: string
+      artifact-repo-url:
+        description: 'The URL of the artifact repository (if use-custom-artifact-repo == "true")'
+        required: false
+        default: ''
+        type: string
+      helm-registry:
+        description: 'The helm registry URL'
+        required: true
+        type: string
+      helm-chart-root:
+        description: 'The directory containing the chart directory'
+        required: false
+        default: 'helm'
+        type: string
+      helm-chart-directory:
+        description: 'The directory of the chart (where Chart.yaml is), relative to inputs.helm-chart-root'
+        required: false
+        default: 'chart'
+        type: string
+    secrets:
+      DOCKER_REPOSITORY_USER:
+        description: 'Docker repository login username. Required if the docker registry requires authentication.'
+        required: false
+      DOCKER_REPOSITORY_PASSWORD:
+        description: 'Docker repository login password. Required if the docker registry requires authentication.'
+        required: false
+      ADDITIONAL_DOCKER_REPOS:
+        description: 'Additional docker repositories. Must be formatted as lines of "repoUrl;username;password".'
+        required: false
+      ARTIFACT_REPO_USER:
+        description: 'The username of the artifact repository (if use-custom-artifact-repo == "true")'
+        required: false
+      ARTIFACT_REPO_PASSWORD:
+        description: 'The password of the artifact repository (if use-custom-artifact-repo == "true")'
+        required: false
+      HELM_REGISTRY_USERNAME:
+        description: 'The helm registry username'
+        required: true
+      HELM_REGISTRY_PASSWORD:
+        description: 'The helm registry password'
+        required: true
+
+imports:
+  - 'templates/linter.yml'
+  - 'templates/node.yml'
+  - 'templates/docker.yml'
+  - 'templates/format.yml'
+  - 'templates/helm.yml'
+
+internals:
+  common-envs: &common_envs
+    # Not passing any build artifacts to docker job.
+    BUILD_ARTIFACT_NAME: ''
+    USE_CUSTOM_ARTIFACT_REPO: ${{ inputs.use-custom-artifact-repo }}
+    ARTIFACT_REPO_URL: ${{ inputs.artifact-repo-url }}
+
+  node-envs: &node_envs
+    NODE_VERSION: ${{ inputs.node-version }}
+    <<: *common_envs
+
+  docker-envs: &docker_envs
+    DOCKER_IMAGE_TAG: ${{ needs.format-release-version.outputs.release_version }}
+    DOCKER_REGISTRY: ${{ inputs.docker-registry }}
+    <<: *common_envs
+
+  helm-envs: &helm_envs
+    HELM_REGISTRY_URL: ${{ inputs.helm-registry }}
+    HELM_CHART_ROOT: ${{ inputs.helm-chart-root }}
+    HELM_CHART_DIR: ${{ inputs.helm-chart-directory }}
+    HELM_CHART_VERSION: ${{ needs.format-release-version.outputs.release_version }}
+
+
+jobs:
+  lint-commits:
+    if: ${{ github.event_name == 'pull_request' }}
+    extends: linter/lint-commits
+
+  format-release-version:
+    extends: format/release-version
+    env:
+      RELEASE_VERSION: ${{ inputs.release-version }}
+
+  npm-build-node:
+    needs: [format-release-version]
+    env:
+      <<: *node_envs
+    extends: node/build-node-npm
+
+  build-docker-hub:
+    needs: [format-release-version, npm-build-node]
+    if: |
+      always() &&
+      contains(needs.*.result, 'success') &&
+      inputs.docker-registry == 'docker-hub'
+    env:
+      <<: *docker_envs
+    extends: docker/build-docker-hub
+
+  build-docker-ghcr:
+    needs: [format-release-version, npm-build-node]
+    if: |
+      always() &&
+      contains(needs.*.result, 'success') &&
+      inputs.docker-registry == 'ghcr'
+    env:
+      <<: *docker_envs
+    extends: docker/build-docker-ghcr
+
+  # TODO: its probably (definitely) possible to merge all these builds in a single one...
+  build-docker-custom:
+    needs: [format-release-version, npm-build-node]
+    if: |
+      always() &&
+      contains(needs.*.result, 'success') &&
+      inputs.docker-registry != 'docker-hub' && 
+      inputs.docker-registry != 'ghcr'
+    env:
+      <<: *docker_envs
+    extends: docker/build-docker-custom
+
+  # For now supporting custom
+  build-helm-custom:
+    needs: [format-release-version, build-docker-custom]
+    env:
+      <<: *helm_envs
+      HELM_VALUES_IMAGE: ${{ needs.build-docker-custom.outputs.docker_image }}
+    extends: helm/push-chart

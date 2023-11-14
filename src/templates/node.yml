@@ -1,0 +1,76 @@
+# Needs:
+## PERMISSIONS:
+# - packages: write (for deploying to GitHub packages)
+## ENVIRONMENT VARIABLES:
+# - NODE_VERSION: The version of the build, e.g. 1.0.0, 1.0.0-SNAPSHOT, ...
+# - USE_CUSTOM_ARTIFACT_REPO (Optional): Whether to use a custom artifact repository or use GitHub's shared storage.
+# - if USE_CUSTOM_ARTIFACT_REPO is 'true':
+# -   ARTIFACT_REPO_URL (Optional): The URL of the artifact repository (if USE_CUSTOM_ARTIFACT_REPO == true).
+# -   secrets.ARTIFACT_REPO_USER (Optional): The username of the artifact repository (if USE_CUSTOM_ARTIFACT_REPO == true).
+# -   secrets.ARTIFACT_REPO_PASSWORD (Optional): The password of the artifact repository (if USE_CUSTOM_ARTIFACT_REPO == true).
+
+internals:
+  pre: &pre !zipped
+    - uses: actions/checkout@v3
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+  setup-npm: &setup_npm !zipped
+    - name: Set up Node ${{ env.NODE_VERSION }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+    - name: Set cache environments
+      run: |
+        echo "cache_dir=$(npm config get cache)" >> $GITHUB_ENV
+        echo "cache_hash=$(sha1sum ./package-lock.json | awk '{print $1}')" >> $GITHUB_ENV
+    - name: Download cached dependencies
+      if: ${{ env.USE_CUSTOM_ARTIFACT_REPO == 'true' }}
+      run: |
+        mkdir -p ${{ env.cache_dir }}
+        cd ${{ env.cache_dir }}
+        cachePath="${{ env.ARTIFACT_REPO_URL }}cache/npm/${{ env.cache_hash }}/cached.tar.gz"
+        tries=0
+        while : ; do
+          statusCode=$(curl --write-out '%{http_code}' -o cached.tar.gz --user '${{ secrets.ARTIFACT_REPO_USER }}:${{ secrets.ARTIFACT_REPO_PASSWORD }}' $cachePath)
+          echo "Try $((++tries)) - Status code: $statusCode"
+          [[ $statusCode = "200" || $statusCode = "404" || $tries = "5" ]] && break
+        done
+        [[ $statusCode = "200" ]] || exit 0
+        tar -xzf cached.tar.gz
+        rm -rf cached.tar.gz
+  upload-repo-cache: &upload_repo_cache
+    name: Upload cached dependencies
+    run: |
+      mkdir -p ${{ env.cache_dir }}
+      cd ${{ env.cache_dir }}
+      [[ -z "$(ls -A .)" ]] && exit 0
+      
+      tar -cvzf ../cached.tar.gz .
+      
+      cachePath="${{ env.ARTIFACT_REPO_URL }}cache/npm/${{ env.cache_hash }}/cached.tar.gz"
+      tries=0
+      while : ; do
+        statusCode=$(curl --write-out '%{http_code}' --silent --output /dev/null \
+        --user '${{ secrets.ARTIFACT_REPO_USER }}:${{ secrets.ARTIFACT_REPO_PASSWORD }}' \
+        --upload-file ../cached.tar.gz $cachePath)
+        echo "::debug::Try $((++tries)) - Status code: $statusCode"
+        [[ $statusCode = "201" || $tries = "5" ]] && break
+      done
+      
+      # Warn if statusCode is not 201 - Created
+      [[ $statusCode = "201" ]] || echo "::warning Could not upload cache"
+
+jobs:
+  # I understand that, even though this job is named "build", it doesn't do much building.
+  # In fact, building is left to the Dockerfile since the build process and output might differ from project to project.
+  build-node-npm:
+    runs-on: arc-systems
+    steps: !unzip
+      - *pre
+      - *setup_npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Run npm tests
+        run: npm run test
+      - *upload_repo_cache

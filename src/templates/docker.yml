@@ -1,8 +1,8 @@
 # Needs:
 ## ENVIRONMENT VARIABLES:
-# - BUILD_ARTIFACT_NAME: The name of the artifact containing the data to copy to docker
 # - DOCKER_IMAGE_TAG: The tag of the Docker image to build, e.g. latest, 1.0.0, dev-snapshot, ....
 # - DOCKER_REGISTRY: The name/url of the docker registry.
+# - BUILD_ARTIFACT_NAME (Optional) : The name of the artifact containing the data to copy to docker
 # - USE_CUSTOM_ARTIFACT_REPO (Optional): Whether to use a custom artifact repository or use GitHub's shared storage.
 # - secrets.ADDITIONAL_DOCKER_REPOS (Optional): Additional docker repositories (repoUrl;username;password)
 # - if USE_CUSTOM_ARTIFACT_REPO is 'true':
@@ -30,12 +30,12 @@ internals:
         token: ${{ secrets.GITHUB_TOKEN }}
     - name: Download artifact using Github
       uses: actions/download-artifact@v3
-      if: ${{ env.USE_CUSTOM_ARTIFACT_REPO != 'true' }}
+      if: ${{ env.BUILD_ARTIFACT_NAME != '' && env.USE_CUSTOM_ARTIFACT_REPO != 'true' }}
       with:
         name: ${{ env.BUILD_ARTIFACT_NAME }}
         path: build.zip
     - name: Download artifact using external service
-      if: ${{ env.USE_CUSTOM_ARTIFACT_REPO == 'true' }}
+      if: ${{ env.BUILD_ARTIFACT_NAME != '' && env.USE_CUSTOM_ARTIFACT_REPO == 'true' }}
       run: |
         artifactPath="${{ env.ARTIFACT_REPO_URL }}github/${{ github.run_id }}/${{ env.BUILD_ARTIFACT_NAME }}"
         tries=0
@@ -47,6 +47,7 @@ internals:
         # Fail if statusCode is not 200 - OK
         [[ $statusCode = "200" ]] || exit 1
     - name: Unzip build artifact
+      if: ${{ env.BUILD_ARTIFACT_NAME != '' }}
       run: unzip build.zip
     - name: Build Docker image
       run: docker build -t ${{ env.internal_docker_name }} .
