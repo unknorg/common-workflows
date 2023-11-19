@@ -1,16 +1,11 @@
-name: Dockerized Java Build
+name: Dockerized Node Build
 'on':
   workflow_call:
     inputs:
-      jdk-version:
-        description: The JDK version to use (8, 11, 15, ...)
+      node-version:
+        description: The node version to use (18, 16, 16.15.1, ...)
         required: true
-        default: '17'
-        type: string
-      java-build-tool:
-        description: The build tool to use (maven for now)
-        required: true
-        default: maven
+        default: '18'
         type: string
       docker-registry:
         description: >-
@@ -21,8 +16,8 @@ name: Dockerized Java Build
         type: string
       release-version:
         description: >-
-          Release version to tag both the java and docker image with. Ignored if
-          running from a pull request.
+          Release version to tag the docker image with. Ignored if running from
+          a pull request.
         required: false
         default: ''
         type: string
@@ -71,9 +66,6 @@ name: Dockerized Java Build
         description: >-
           Additional docker repositories. Must be formatted as lines of
           "repoUrl;username;password".
-        required: false
-      MAVEN_SETTINGS_XML:
-        description: A custom definition of ~/.m2/settings.xml
         required: false
       ARTIFACT_REPO_USER:
         description: >-
@@ -169,32 +161,23 @@ jobs:
       release_version: ${{ steps.unified.outputs.release_version }}
     env:
       RELEASE_VERSION: ${{ inputs.release-version }}
-  mvn-build-java:
+  npm-build-node:
     runs-on: arc-systems
     steps:
       - uses: actions/checkout@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-      - run: >
-          echo "internal_build_tool=maven" >> $GITHUB_ENV
-
-          echo "cache_dir=~/.m2/repository" >> $GITHUB_ENV
-
-          echo "cache_hash=$(sha1sum ./pom.xml | awk '{print $1}')" >>
-          $GITHUB_ENV
-      - name: Format actions/setup-java cache
-        run: |
-          cachePkgMgr=""
-          if [[ ${{ env.USE_CUSTOM_ARTIFACT_REPO }} != "true" ]]; then
-            cachePkgMgr="${{ env.internal_build_tool }}"
-          fi
-          echo "jdk_cache=$cachePkgMgr" >> $GITHUB_ENV
-      - name: Set up JDK ${{ env.JAVA_JDK_VERSION }}
-        uses: actions/setup-java@v3
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
         with:
-          java-version: ${{ env.JAVA_JDK_VERSION }}
-          distribution: ${{ env.JAVA_JDK_DISTRIBUTION || 'corretto' }}
-          cache: ${{ env.jdk_cache }}
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Set cache environments
+        run: >
+          echo "cache_dir=$(npm config get cache)" >> $GITHUB_ENV
+
+          echo "cache_hash=$(sha1sum ./package-lock.json | awk '{print $1}')" >>
+          $GITHUB_ENV
       - name: Download cached dependencies
         if: ${{ env.USE_CUSTOM_ARTIFACT_REPO == 'true' }}
         run: >
@@ -202,8 +185,8 @@ jobs:
 
           cd ${{ env.cache_dir }}
 
-          cachePath="${{ env.ARTIFACT_REPO_URL }}cache/${{
-          env.internal_build_tool }}/${{ env.cache_hash }}/cached.tar.gz"
+          cachePath="${{ env.ARTIFACT_REPO_URL }}cache/npm/${{ env.cache_hash
+          }}/cached.tar.gz"
 
           tries=0
 
@@ -218,41 +201,10 @@ jobs:
           tar -xzf cached.tar.gz
 
           rm -rf cached.tar.gz
-      - name: Update settings.xml
-        run: >-
-          [ ! "${{ secrets.MAVEN_SETTINGS_XML }}"] || echo "${{
-          secrets.MAVEN_SETTINGS_XML }}" > ~/.m2/settings.xml
-      - name: Build with Maven
-        run: >-
-          mvn -Drevision=${{ env.JAVA_BUILD_VERSION }} -B clean install --file
-          pom.xml
-      - name: Compress build artifact
-        run: zip -r build.zip target
-      - name: Upload artifact using Github
-        if: ${{ env.USE_CUSTOM_ARTIFACT_REPO != 'true' }}
-        uses: actions/upload-artifact@v3
-        with:
-          name: ${{ env.BUILD_ARTIFACT_NAME }}
-          path: build.zip
-      - name: Upload artifact using external service
-        if: ${{ env.USE_CUSTOM_ARTIFACT_REPO == 'true' }}
-        run: >
-          artifactPath="${{ env.ARTIFACT_REPO_URL }}github/${{ github.run_id
-          }}/${{ env.BUILD_ARTIFACT_NAME }}"
-
-          tries=0
-
-          while : ; do
-            statusCode=$(curl --write-out '%{http_code}' --silent --output /dev/null \
-            --user '${{ secrets.ARTIFACT_REPO_USER }}:${{ secrets.ARTIFACT_REPO_PASSWORD }}' \
-            --upload-file build.zip $artifactPath)
-            echo "Try $((++tries)) - Status code: $statusCode"
-            [[ $statusCode = "201" || $tries = "5" ]] && break
-          done
-
-          # Fail if statusCode is not 201 - Created
-
-          [[ $statusCode = "201" ]] || exit 1
+      - name: Install dependencies
+        run: npm ci
+      - name: Run npm tests
+        run: npm run test
       - name: Upload cached dependencies
         run: >
           mkdir -p ${{ env.cache_dir }}
@@ -265,8 +217,8 @@ jobs:
           tar -cvzf ../cached.tar.gz .
 
 
-          cachePath="${{ env.ARTIFACT_REPO_URL }}cache/${{
-          env.internal_build_tool }}/${{ env.cache_hash }}/cached.tar.gz"
+          cachePath="${{ env.ARTIFACT_REPO_URL }}cache/npm/${{ env.cache_hash
+          }}/cached.tar.gz"
 
           tries=0
 
@@ -284,12 +236,9 @@ jobs:
           [[ $statusCode = "201" ]] || echo "::warning Could not upload cache"
     needs:
       - format-release-version
-    if: ${{ inputs.java-build-tool == 'maven' }}
     env:
-      JAVA_JDK_VERSION: ${{ inputs.jdk-version }}
-      JAVA_BUILD_TOOL: ${{ inputs.java-build-tool }}
-      JAVA_BUILD_VERSION: ${{ needs.format-release-version.outputs.release_version }}
-      BUILD_ARTIFACT_NAME: ${{ needs.format-release-version.outputs.release_version }}
+      NODE_VERSION: ${{ inputs.node-version }}
+      BUILD_ARTIFACT_NAME: ''
       USE_CUSTOM_ARTIFACT_REPO: ${{ inputs.use-custom-artifact-repo }}
       ARTIFACT_REPO_URL: ${{ inputs.artifact-repo-url }}
   build-docker-hub:
@@ -354,7 +303,7 @@ jobs:
       docker_image: ${{ steps.outputs.outputs.docker_image }}
     needs:
       - format-release-version
-      - mvn-build-java
+      - npm-build-node
     if: |
       always() &&
       contains(needs.*.result, 'success') &&
@@ -362,7 +311,7 @@ jobs:
     env:
       DOCKER_IMAGE_TAG: ${{ needs.format-release-version.outputs.release_version }}
       DOCKER_REGISTRY: ${{ inputs.docker-registry }}
-      BUILD_ARTIFACT_NAME: ${{ needs.format-release-version.outputs.release_version }}
+      BUILD_ARTIFACT_NAME: ''
       USE_CUSTOM_ARTIFACT_REPO: ${{ inputs.use-custom-artifact-repo }}
       ARTIFACT_REPO_URL: ${{ inputs.artifact-repo-url }}
   build-docker-ghcr:
@@ -428,7 +377,7 @@ jobs:
       docker_image: ${{ steps.outputs.outputs.docker_image }}
     needs:
       - format-release-version
-      - mvn-build-java
+      - npm-build-node
     if: |
       always() &&
       contains(needs.*.result, 'success') &&
@@ -436,7 +385,7 @@ jobs:
     env:
       DOCKER_IMAGE_TAG: ${{ needs.format-release-version.outputs.release_version }}
       DOCKER_REGISTRY: ${{ inputs.docker-registry }}
-      BUILD_ARTIFACT_NAME: ${{ needs.format-release-version.outputs.release_version }}
+      BUILD_ARTIFACT_NAME: ''
       USE_CUSTOM_ARTIFACT_REPO: ${{ inputs.use-custom-artifact-repo }}
       ARTIFACT_REPO_URL: ${{ inputs.artifact-repo-url }}
   build-docker-custom:
@@ -503,7 +452,7 @@ jobs:
       docker_image: ${{ steps.outputs.outputs.docker_image }}
     needs:
       - format-release-version
-      - mvn-build-java
+      - npm-build-node
     if: |
       always() &&
       contains(needs.*.result, 'success') &&
@@ -512,7 +461,7 @@ jobs:
     env:
       DOCKER_IMAGE_TAG: ${{ needs.format-release-version.outputs.release_version }}
       DOCKER_REGISTRY: ${{ inputs.docker-registry }}
-      BUILD_ARTIFACT_NAME: ${{ needs.format-release-version.outputs.release_version }}
+      BUILD_ARTIFACT_NAME: ''
       USE_CUSTOM_ARTIFACT_REPO: ${{ inputs.use-custom-artifact-repo }}
       ARTIFACT_REPO_URL: ${{ inputs.artifact-repo-url }}
   build-helm-custom:
