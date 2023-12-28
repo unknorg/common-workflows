@@ -1,0 +1,100 @@
+# Needs:
+# - ENVIRONMENT VARIABLES:
+# - SONARQUBE_URL: Sonarqube instance base url
+# - secrets.SONARQUBE_TOKEN: Sonarqube authentication token
+# - SONARQUBE_LANG: Project language (ex. 'java', 'javascript', ...)
+# - SONARSCANNER_ADDITIONAL_ARGS (optional): Additional args to pass to sonar-scanner
+#
+# - BUILD_ARTIFACT_NAME: The name of the artifact to upload, e.g. 1.0.0-rc, file.zip, ...
+# - USE_CUSTOM_ARTIFACT_REPO (Optional): Use custom artifact repository or GitHub's shared storage to download build artifacts.
+# - if USE_CUSTOM_ARTIFACT_REPO is 'true':
+# -   ARTIFACT_REPO_URL (Optional): The URL of the artifact repository (if USE_CUSTOM_ARTIFACT_REPO == true).
+# -   secrets.ARTIFACT_REPO_USER (Optional): The username of the artifact repository (if USE_CUSTOM_ARTIFACT_REPO == true).
+# -   secrets.ARTIFACT_REPO_PASSWORD (Optional): The password of the artifact repository (if USE_CUSTOM_ARTIFACT_REPO == true).
+
+jobs:
+  # TODO: Find a way to manage concurrency.
+  # sonarqube-report should run right after sonarqube-scan for the same branch, but parallel executions might
+  # lead to wrong analysis reports.
+  # To be fixed when https://github.com/orgs/community/discussions/12835 is implemented.
+  sonarqube-scan:
+    runs-on: arc-systems
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+      - name: Download artifact using Github
+        uses: actions/download-artifact@v3
+        if: >-
+          ${{ env.BUILD_ARTIFACT_NAME != '' && env.USE_CUSTOM_ARTIFACT_REPO !=
+          'true' }}
+        with:
+          name: ${{ env.BUILD_ARTIFACT_NAME }}
+          path: build.zip
+      - name: Download artifact using external service
+        if: ${{ env.BUILD_ARTIFACT_NAME != '' && env.USE_CUSTOM_ARTIFACT_REPO == 'true' }}
+        run: |
+          artifactPath="${{ env.ARTIFACT_REPO_URL }}github/${{ github.run_id }}/${{ env.BUILD_ARTIFACT_NAME }}"
+          tries=0
+          while : ; do
+            statusCode=$(curl --write-out '%{http_code}' -o build.zip --user '${{ secrets.ARTIFACT_REPO_USER }}:${{ secrets.ARTIFACT_REPO_PASSWORD }}' $artifactPath)
+            echo "Try $((++tries)) - Status code: $statusCode"
+            [[ $statusCode = "200" || $tries = "5" ]] && break
+          done
+          # Fail if statusCode is not 200 - OK
+          [[ $statusCode = "200" ]] || exit 1
+      - name: Unzip build artifact
+        if: ${{ env.BUILD_ARTIFACT_NAME != '' }}
+        run: unzip build.zip
+      - name: Send code using SonarScanner
+        run: |
+          if [[ "${{ github.event_name }}" = "pull_request" ]]; then
+            sonarscannerArgs="-D\"sonar.pullrequest.key=${{ github.event.pull_request.number }}\" -D\"sonar.pullrequest.branch=${{ github.event.pull_request.head.ref }}\" -D\"sonar.pullrequest.base=${{ github.event.pull_request.base.ref }}\""
+          else
+            sonarscannerArgs="-D\"sonar.branch.name=${{ github.ref_name }}\""
+          fi
+          sonar-scanner \
+          -D"sonar.projectKey=github:${{ github.repository_owner }}.${{ github.event.repository.name }}" \
+          -D"sonar.host.url=${{ env.SONARQUBE_URL }}" \
+          -D"sonar.token=${{ secrets.SONARQUBE_TOKEN }}" \
+          -D"sonar.language=${{ env.SONARQUBE_LANG }}" \
+          $sonarscannerArgs \
+          ${{ env.SONARSCANNER_ADDITIONAL_ARGS || '' }}
+
+  sonarqube-report:
+    runs-on: arc-systems
+    steps:
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: 18
+          distribution: corretto
+      - name: Run sonarqube report generation
+        id: report-generation
+        run: |
+          sonarReportArgs=""
+          if [[ "${{ github.event_name }}" = "pull_request" ]]; then
+          sonarReportArgs="--pullrequest ${{ github.event.pull_request.number }}"
+          fi
+          jarUrl="https://github.com/Hathoute/simple-sonar-report/releases/download/0.0.3/simple-sonar-report.jar"
+          curl -LJO $jarUrl
+          set +e
+          java -jar simple-sonar-report.jar -p github:${{ github.repository_owner }}.${{ github.event.repository.name }} -u ${{ env.SONARQUBE_URL }} -t ${{ secrets.SONARQUBE_TOKEN }} -o ./report_out.md $sonarReportArgs
+          reportExitCode=$?
+          set -e
+          output=$(cat ./report_out.md)
+          echo "markdown_output<<EOF" >> $GITHUB_OUTPUT
+          echo "$output" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "report_exit_code=$reportExitCode" >> $GITHUB_OUTPUT
+      - name: Show sonarqube report
+        uses: Hathoute/action-create-comment@v1.0.4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          comment_uid: 313222
+          body: |
+            ${{ steps.report-generation.outputs.markdown_output }}
+      - name: Fail on Quality Gate failure
+        if: ${{ github.event_name == 'pull_request' && steps.report-generation.outputs.report_exit_code != '0' }}
+        run: exit 1
