@@ -56,6 +56,13 @@ name: Dockerized Java Build
         required: false
         default: chart
         type: string
+      sonarqube-url:
+        description: >-
+          The base url of the sonarqube instance, leave empty to disable quality
+          gate
+        required: false
+        default: ''
+        type: string
     secrets:
       DOCKER_REPOSITORY_USER:
         description: >-
@@ -91,6 +98,9 @@ name: Dockerized Java Build
       HELM_REGISTRY_PASSWORD:
         description: The helm registry password
         required: true
+      SONARQUBE_TOKEN:
+        description: The sonarqube instance token (if sonarqube-url is provided)
+        required: false
 jobs:
   lint-commits:
     runs-on: arc-systems
@@ -577,3 +587,136 @@ jobs:
       HELM_CHART_DIR: ${{ inputs.helm-chart-directory }}
       HELM_CHART_VERSION: ${{ needs.format-release-version.outputs.release_version }}
       HELM_VALUES_IMAGE: ${{ needs.build-docker-custom.outputs.docker_image }}
+  quality-gate:
+    runs-on: arc-systems
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+      - name: Download artifact using Github
+        uses: actions/download-artifact@v3
+        if: >-
+          ${{ env.BUILD_ARTIFACT_NAME != '' && env.USE_CUSTOM_ARTIFACT_REPO !=
+          'true' }}
+        with:
+          name: ${{ env.BUILD_ARTIFACT_NAME }}
+          path: build.zip
+      - name: Download artifact using external service
+        if: >-
+          ${{ env.BUILD_ARTIFACT_NAME != '' && env.USE_CUSTOM_ARTIFACT_REPO ==
+          'true' }}
+        run: >
+          artifactPath="${{ env.ARTIFACT_REPO_URL }}github/${{ github.run_id
+          }}/${{ env.BUILD_ARTIFACT_NAME }}"
+
+          tries=0
+
+          while : ; do
+            statusCode=$(curl --write-out '%{http_code}' -o build.zip --user '${{ secrets.ARTIFACT_REPO_USER }}:${{ secrets.ARTIFACT_REPO_PASSWORD }}' $artifactPath)
+            echo "Try $((++tries)) - Status code: $statusCode"
+            [[ $statusCode = "200" || $tries = "5" ]] && break
+          done
+
+          # Fail if statusCode is not 200 - OK
+
+          [[ $statusCode = "200" ]] || exit 1
+      - name: Unzip build artifact
+        if: ${{ env.BUILD_ARTIFACT_NAME != '' }}
+        run: unzip build.zip
+      - name: Send code using SonarScanner
+        run: >
+          if [[ "${{ github.event_name }}" = "pull_request" ]]; then
+            sonarscannerArgs="-D\"sonar.pullrequest.key=${{ github.event.pull_request.number }}\" -D\"sonar.pullrequest.branch=${{ github.event.pull_request.head.ref }}\" -D\"sonar.pullrequest.base=${{ github.event.pull_request.base.ref }}\""
+          else
+            sonarscannerArgs="-D\"sonar.branch.name=${{ github.ref_name }}\""
+          fi
+
+          sonar-scanner \
+
+          -D"sonar.projectKey=github:${{ github.repository_owner }}.${{
+          github.event.repository.name }}" \
+
+          -D"sonar.host.url=${{ env.SONARQUBE_URL }}" \
+
+          -D"sonar.token=${{ secrets.SONARQUBE_TOKEN }}" \
+
+          -D"sonar.language=${{ env.SONARQUBE_LANG }}" \
+
+          $sonarscannerArgs \
+
+          ${{ env.SONARSCANNER_ADDITIONAL_ARGS || '' }}
+    needs:
+      - format-release-version
+      - mvn-build-java
+    if: ${{ inputs.sonarqube-url != '' }}
+    env:
+      SONARQUBE_URL: ${{ inputs.sonarqube-url }}
+      SONARQUBE_LANG: java
+      BUILD_ARTIFACT_NAME: ${{ needs.format-release-version.outputs.release_version }}
+      USE_CUSTOM_ARTIFACT_REPO: ${{ inputs.use-custom-artifact-repo }}
+      ARTIFACT_REPO_URL: ${{ inputs.artifact-repo-url }}
+  quality-report:
+    runs-on: arc-systems
+    steps:
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: 18
+          distribution: corretto
+      - name: Run sonarqube report generation
+        id: report-generation
+        run: >
+          sonarReportArgs=""
+
+          if [[ "${{ github.event_name }}" = "pull_request" ]]; then
+
+          sonarReportArgs="--pullrequest ${{ github.event.pull_request.number
+          }}"
+
+          fi
+
+          jarUrl="https://github.com/Hathoute/simple-sonar-report/releases/download/0.0.3/simple-sonar-report.jar"
+
+          curl -LJO $jarUrl
+
+          set +e
+
+          java -jar simple-sonar-report.jar -p github:${{
+          github.repository_owner }}.${{ github.event.repository.name }} -u ${{
+          env.SONARQUBE_URL }} -t ${{ secrets.SONARQUBE_TOKEN }} -o
+          ./report_out.md $sonarReportArgs
+
+          reportExitCode=$?
+
+          set -e
+
+          output=$(cat ./report_out.md)
+
+          echo "markdown_output<<EOF" >> $GITHUB_OUTPUT
+
+          echo "$output" >> $GITHUB_OUTPUT
+
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          echo "report_exit_code=$reportExitCode" >> $GITHUB_OUTPUT
+      - name: Show sonarqube report
+        uses: Hathoute/action-create-comment@v1.0.4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          comment_uid: 313222
+          body: |
+            ${{ steps.report-generation.outputs.markdown_output }}
+      - name: Fail on Quality Gate failure
+        if: >-
+          ${{ github.event_name == 'pull_request' &&
+          steps.report-generation.outputs.report_exit_code != '0' }}
+        run: exit 1
+    needs:
+      - quality-gate
+    env:
+      SONARQUBE_URL: ${{ inputs.sonarqube-url }}
+      SONARQUBE_LANG: java
+      BUILD_ARTIFACT_NAME: ${{ needs.format-release-version.outputs.release_version }}
+      USE_CUSTOM_ARTIFACT_REPO: ${{ inputs.use-custom-artifact-repo }}
+      ARTIFACT_REPO_URL: ${{ inputs.artifact-repo-url }}
