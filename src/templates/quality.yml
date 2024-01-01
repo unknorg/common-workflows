@@ -52,7 +52,9 @@ jobs:
           if [[ "${{ github.event_name }}" = "pull_request" ]]; then
             sonarscannerArgs="-D\"sonar.pullrequest.key=${{ github.event.pull_request.number }}\" -D\"sonar.pullrequest.branch=${{ github.event.pull_request.head.ref }}\" -D\"sonar.pullrequest.base=${{ github.event.pull_request.base.ref }}\""
           else
-            sonarscannerArgs="-D\"sonar.branch.name=${{ github.ref_name }}\""
+            raw=$(git branch -r --contains ${{ github.ref }})
+            branch=${raw/origin\/}
+            sonarscannerArgs="-D\"sonar.branch.name=$branch\" -D\"sonar.projectVersion=${{ github.ref_name }}\""
           fi
           sonar-scanner \
           -D"sonar.projectKey=github:${{ github.repository_owner }}.${{ github.event.repository.name }}" \
