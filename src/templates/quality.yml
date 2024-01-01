@@ -49,23 +49,24 @@ jobs:
         run: unzip build.zip
       - name: Send code using SonarScanner
         run: |
-          if [[ "${{ github.event_name }}" = "pull_request" ]]; then
-            sonarscannerArgs="-D\"sonar.pullrequest.key=${{ github.event.pull_request.number }}\" -D\"sonar.pullrequest.branch=${{ github.event.pull_request.head.ref }}\" -D\"sonar.pullrequest.base=${{ github.event.pull_request.base.ref }}\""
-          else
+          if [[ "${{ github.event_name }}" = "push" ]]; then
+            # Manually handle tag push only, as pull requests are correctly handled by the branch plugin
             raw=$(git branch -r --contains ${{ github.ref }})
-            branch=${raw/origin\/}
-            sonarscannerArgs="-D\"sonar.branch.name=$branch\" -D\"sonar.projectVersion=${{ github.ref_name }}\""
+            branch=${raw##*/}
+            echo "" >> ./sonar-project.properties
+            echo "sonar.branch.name=$branch" >> ./sonar-project.properties 
+            echo "sonar.projectVersion=${{ github.ref_name }}" >> ./sonar-project.properties
           fi
           sonar-scanner \
           -D"sonar.projectKey=github:${{ github.repository_owner }}.${{ github.event.repository.name }}" \
           -D"sonar.host.url=${{ env.SONARQUBE_URL }}" \
           -D"sonar.token=${{ secrets.SONARQUBE_TOKEN }}" \
           -D"sonar.language=${{ env.SONARQUBE_LANG }}" \
-          $sonarscannerArgs \
           ${{ env.SONARSCANNER_ADDITIONAL_ARGS || '' }}
 
   sonarqube-report:
     runs-on: arc-systems
+    if: github.event_name == 'pull_request'
     steps:
       - name: Set up Java
         uses: actions/setup-java@v3
@@ -75,14 +76,12 @@ jobs:
       - name: Run sonarqube report generation
         id: report-generation
         run: |
-          sonarReportArgs=""
-          if [[ "${{ github.event_name }}" = "pull_request" ]]; then
-          sonarReportArgs="--pullrequest ${{ github.event.pull_request.number }}"
-          fi
           jarUrl="https://github.com/Hathoute/simple-sonar-report/releases/download/0.0.3/simple-sonar-report.jar"
           curl -LJO $jarUrl
           set +e
-          java -jar simple-sonar-report.jar -p github:${{ github.repository_owner }}.${{ github.event.repository.name }} -u ${{ env.SONARQUBE_URL }} -t ${{ secrets.SONARQUBE_TOKEN }} -o ./report_out.md $sonarReportArgs
+          java -jar simple-sonar-report.jar -p github:${{ github.repository_owner }}.${{ github.event.repository.name }} \
+            -u ${{ env.SONARQUBE_URL }} -t ${{ secrets.SONARQUBE_TOKEN }} -o ./report_out.md \
+            --pullrequest ${{ github.event.pull_request.number }}
           reportExitCode=$?
           set -e
           output=$(cat ./report_out.md)
