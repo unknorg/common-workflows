@@ -669,7 +669,7 @@ jobs:
       - name: Run sonarqube report generation
         id: report-generation
         run: >
-          jarUrl="https://github.com/Hathoute/simple-sonar-report/releases/download/0.0.3/simple-sonar-report.jar"
+          jarUrl="https://github.com/Hathoute/simple-sonar-report/releases/download/0.0.4/simple-sonar-report.jar"
 
           curl -LJO $jarUrl
 
