@@ -240,7 +240,7 @@ jobs:
         run: zip -r build.zip target
       - name: Upload artifact using Github
         if: ${{ env.USE_CUSTOM_ARTIFACT_REPO != 'true' }}
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ env.BUILD_ARTIFACT_NAME }}
           path: build.zip
@@ -324,7 +324,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
       - name: Download artifact using Github
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         if: >-
           ${{ env.BUILD_ARTIFACT_NAME != '' && env.USE_CUSTOM_ARTIFACT_REPO !=
           'true' }}
@@ -398,7 +398,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
       - name: Download artifact using Github
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         if: >-
           ${{ env.BUILD_ARTIFACT_NAME != '' && env.USE_CUSTOM_ARTIFACT_REPO !=
           'true' }}
@@ -473,7 +473,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
       - name: Download artifact using Github
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         if: >-
           ${{ env.BUILD_ARTIFACT_NAME != '' && env.USE_CUSTOM_ARTIFACT_REPO !=
           'true' }}
@@ -595,7 +595,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
       - name: Download artifact using Github
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         if: >-
           ${{ env.BUILD_ARTIFACT_NAME != '' && env.USE_CUSTOM_ARTIFACT_REPO !=
           'true' }}
