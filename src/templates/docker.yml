@@ -29,7 +29,7 @@ internals:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
     - name: Download artifact using Github
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       if: ${{ env.BUILD_ARTIFACT_NAME != '' && env.USE_CUSTOM_ARTIFACT_REPO != 'true' }}
       with:
         name: ${{ env.BUILD_ARTIFACT_NAME }}

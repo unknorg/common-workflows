@@ -21,7 +21,7 @@ jobs:
           generated-directory: ${{ env.BUILD_DIR }}
       - name: Rename generated workflows
         run: find ${{ env.BUILD_DIR }} -type f -name '*.yml' -exec bash -c 'mv "$1" "${1%.yml}.gen.yml"' _ {} \;
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: generated-workflows
           path: ${{ env.BUILD_DIR }}
@@ -49,7 +49,7 @@ jobs:
           git checkout -b '${{ env.GENERATED_BRANCH }}'
       - name: Remove possibly existing generated workflows
         run: find .github/workflows -type f -name '*.gen.yml' -exec bash -c 'rm -f "$1"' _ {} \;
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: generated-workflows
           path: .github/workflows

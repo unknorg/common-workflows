@@ -160,7 +160,7 @@ jobs:
         run: zip -r build.zip target
       - name: Upload artifact using Github
         if: ${{ env.USE_CUSTOM_ARTIFACT_REPO != 'true' }}
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ env.BUILD_ARTIFACT_NAME }}
           path: build.zip
