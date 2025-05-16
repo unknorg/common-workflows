@@ -25,7 +25,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
       - name: Download artifact using Github
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         if: >-
           ${{ env.BUILD_ARTIFACT_NAME != '' && env.USE_CUSTOM_ARTIFACT_REPO !=
           'true' }}
