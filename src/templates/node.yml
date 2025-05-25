@@ -65,7 +65,7 @@ jobs:
   # I understand that, even though this job is named "build", it doesn't do much building.
   # In fact, building is left to the Dockerfile since the build process and output might differ from project to project.
   build-node-npm:
-    runs-on: arc-systems
+    runs-on: ${{ inputs.runner }}
     steps: !unzip
       - *pre
       - *setup_npm

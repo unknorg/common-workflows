@@ -15,6 +15,11 @@ name: Dockerized Node Build
 on:
   workflow_call:
     inputs:
+      runner:
+        description: 'The runner to use for the jobs ("ubuntu-latest", "self-hosted", ...)'
+        required: true
+        default: 'arc-systems'
+        type: string
       node-version:
         description: 'The node version to use (18, 16, 16.15.1, ...)'
         required: true

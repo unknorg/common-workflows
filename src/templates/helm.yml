@@ -20,7 +20,7 @@ internals:
 
 jobs:
   push-chart:
-    runs-on: arc-systems
+    runs-on: ${{ inputs.runner }}
     steps: !unzip
       - *pre_helm
       - name: Format chart name
@@ -40,14 +40,41 @@ jobs:
           fi
       - name: Replace chart and values with latest versions
         run: |
+          update_yaml_field() {
+            local yamlFile="$1"
+            local fieldName="$2"
+            local fieldValue="$3"
+          
+            if ! command -v yq &>/dev/null; then
+            echo "Error: yq is not installed"
+            return 1
+            fi
+          
+            # Determine which yq is installed
+            local yq_version_output
+            yq_version_output=$(yq --version 2>&1)
+          
+            if [[ "$yq_version_output" == *"mikefarah"* ]]; then
+            # mikefarah/yq syntax
+            yq eval --inplace "$fieldName = \"${fieldValue}\"" "$yamlFile"
+            elif [[ "$yq_version_output" == *"kislyuk"* || "$yq_version_output" == version\ * ]]; then
+            # kislyuk/yq syntax (Python wrapper for jq)
+            yq -Y --in-place "$fieldName = \"${fieldValue}\"" "$yamlFile"
+            else
+            echo "Unknown yq version. Please install either mikefarah/yq or kislyuk/yq."
+            return 1
+            fi
+          }
+          
           chartFile="${{ env.HELM_CHART_ROOT || 'helm' }}/${{ env.HELM_CHART_NAME || 'chart' }}/Chart.yaml"
           valuesFile="${{ env.HELM_CHART_ROOT || 'helm' }}/${{ env.HELM_CHART_NAME || 'chart' }}/values.yaml"
-          yq -Y --in-place '.name = "${{ env.chart_name }}"' $chartFile
-          yq -Y --in-place '.version = "${{ env.chart_version }}"' $chartFile
-          yq -Y --in-place '.appVersion = "${{ env.chart_app_version }}"' $chartFile
-          [ ! "${{ env.HELM_VALUES_IMAGE }}" ] || yq -Y --in-place '.image.name = "${{ env.HELM_VALUES_IMAGE }}"' $valuesFile
+          update_yaml_field $chartFile ".name" "${{ env.chart_name }}"
+          update_yaml_field $chartFile ".version" "${{ env.chart_version }}"
+          update_yaml_field $chartFile ".appVersion" "${{ env.chart_app_version }}"
+          [ ! "${{ env.HELM_VALUES_IMAGE }}" ] || update_yaml_field $valuesFile ".image.name" "${{ env.HELM_VALUES_IMAGE }}"
       - name: Package and push chart to registry
         run: |
           cd ${{ env.HELM_CHART_ROOT || 'helm' }}
+          repoOwner="${{ github.repository_owner }}"
           helm package ${{ env.HELM_CHART_NAME || 'chart' }}
-          helm push ${{ env.chart_name }}-${{ env.chart_version }}.tgz oci://${{ env.HELM_REGISTRY_URL }}/${{ github.repository_owner }}
+          helm push ${{ env.chart_name }}-${{ env.chart_version }}.tgz oci://${{ env.HELM_REGISTRY_URL }}/${repoOwner@L}

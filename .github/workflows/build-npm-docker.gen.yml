@@ -2,6 +2,11 @@ name: Dockerized Node Build
 'on':
   workflow_call:
     inputs:
+      runner:
+        description: The runner to use for the jobs ("ubuntu-latest", "self-hosted", ...)
+        required: true
+        default: arc-systems
+        type: string
       node-version:
         description: The node version to use (18, 16, 16.15.1, ...)
         required: true
@@ -85,7 +90,7 @@ name: Dockerized Node Build
         required: true
 jobs:
   lint-commits:
-    runs-on: arc-systems
+    runs-on: ${{ inputs.runner }}
     steps:
       - name: Lint commits
         uses: actions-ecosystem/action-lint-commits@v1
@@ -134,7 +139,7 @@ jobs:
           exit 1
     if: ${{ github.event_name == 'pull_request' }}
   format-release-version:
-    runs-on: arc-systems
+    runs-on: ${{ inputs.runner }}
     steps:
       - name: Format release version for PR
         if: ${{ github.event_name == 'pull_request' }}
@@ -162,7 +167,7 @@ jobs:
     env:
       RELEASE_VERSION: ${{ inputs.release-version }}
   npm-build-node:
-    runs-on: arc-systems
+    runs-on: ${{ inputs.runner }}
     steps:
       - uses: actions/checkout@v3
         with:
@@ -242,7 +247,7 @@ jobs:
       USE_CUSTOM_ARTIFACT_REPO: ${{ inputs.use-custom-artifact-repo }}
       ARTIFACT_REPO_URL: ${{ inputs.artifact-repo-url }}
   build-docker-hub:
-    runs-on: arc-systems
+    runs-on: ${{ inputs.runner }}
     steps:
       - run: >-
           echo "internal_docker_name=${{ env.DOCKER_IMAGE_NAME }}" >>
@@ -315,7 +320,7 @@ jobs:
       USE_CUSTOM_ARTIFACT_REPO: ${{ inputs.use-custom-artifact-repo }}
       ARTIFACT_REPO_URL: ${{ inputs.artifact-repo-url }}
   build-docker-ghcr:
-    runs-on: arc-systems
+    runs-on: ${{ inputs.runner }}
     steps:
       - run: >-
           echo "ghcr.io/${{ github.repository }}:${{ env.DOCKER_IMAGE_TAG }}" |
@@ -389,7 +394,7 @@ jobs:
       USE_CUSTOM_ARTIFACT_REPO: ${{ inputs.use-custom-artifact-repo }}
       ARTIFACT_REPO_URL: ${{ inputs.artifact-repo-url }}
   build-docker-custom:
-    runs-on: arc-systems
+    runs-on: ${{ inputs.runner }}
     steps:
       - run: >-
           echo "${{ env.DOCKER_REGISTRY }}/${{ github.repository }}:${{
@@ -465,7 +470,7 @@ jobs:
       USE_CUSTOM_ARTIFACT_REPO: ${{ inputs.use-custom-artifact-repo }}
       ARTIFACT_REPO_URL: ${{ inputs.artifact-repo-url }}
   build-helm-custom:
-    runs-on: arc-systems
+    runs-on: ${{ inputs.runner }}
     steps:
       - uses: actions/checkout@v3
       - uses: azure/setup-helm@v3
@@ -494,29 +499,58 @@ jobs:
           fi
       - name: Replace chart and values with latest versions
         run: >
+          update_yaml_field() {
+            local yamlFile="$1"
+            local fieldName="$2"
+            local fieldValue="$3"
+
+            if ! command -v yq &>/dev/null; then
+            echo "Error: yq is not installed"
+            return 1
+            fi
+
+            # Determine which yq is installed
+            local yq_version_output
+            yq_version_output=$(yq --version 2>&1)
+
+            if [[ "$yq_version_output" == *"mikefarah"* ]]; then
+            # mikefarah/yq syntax
+            yq eval --inplace "$fieldName = \"${fieldValue}\"" "$yamlFile"
+            elif [[ "$yq_version_output" == *"kislyuk"* || "$yq_version_output" == version\ * ]]; then
+            # kislyuk/yq syntax (Python wrapper for jq)
+            yq -Y --in-place "$fieldName = \"${fieldValue}\"" "$yamlFile"
+            else
+            echo "Unknown yq version. Please install either mikefarah/yq or kislyuk/yq."
+            return 1
+            fi
+          }
+
+
           chartFile="${{ env.HELM_CHART_ROOT || 'helm' }}/${{
           env.HELM_CHART_NAME || 'chart' }}/Chart.yaml"
 
           valuesFile="${{ env.HELM_CHART_ROOT || 'helm' }}/${{
           env.HELM_CHART_NAME || 'chart' }}/values.yaml"
 
-          yq -Y --in-place '.name = "${{ env.chart_name }}"' $chartFile
+          update_yaml_field $chartFile ".name" "${{ env.chart_name }}"
 
-          yq -Y --in-place '.version = "${{ env.chart_version }}"' $chartFile
+          update_yaml_field $chartFile ".version" "${{ env.chart_version }}"
 
-          yq -Y --in-place '.appVersion = "${{ env.chart_app_version }}"'
-          $chartFile
+          update_yaml_field $chartFile ".appVersion" "${{ env.chart_app_version
+          }}"
 
-          [ ! "${{ env.HELM_VALUES_IMAGE }}" ] || yq -Y --in-place '.image.name
-          = "${{ env.HELM_VALUES_IMAGE }}"' $valuesFile
+          [ ! "${{ env.HELM_VALUES_IMAGE }}" ] || update_yaml_field $valuesFile
+          ".image.name" "${{ env.HELM_VALUES_IMAGE }}"
       - name: Package and push chart to registry
         run: >
           cd ${{ env.HELM_CHART_ROOT || 'helm' }}
 
+          repoOwner="${{ github.repository_owner }}"
+
           helm package ${{ env.HELM_CHART_NAME || 'chart' }}
 
           helm push ${{ env.chart_name }}-${{ env.chart_version }}.tgz oci://${{
-          env.HELM_REGISTRY_URL }}/${{ github.repository_owner }}
+          env.HELM_REGISTRY_URL }}/${repoOwner@L}
     needs:
       - format-release-version
       - build-docker-custom

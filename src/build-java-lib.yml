@@ -12,6 +12,11 @@ name: Deploy Java Library
 on:
   workflow_call:
     inputs:
+      runner:
+        description: 'The runner to use for the jobs ("ubuntu-latest", "self-hosted", ...)'
+        required: true
+        default: 'arc-systems'
+        type: string
       jdk-version:
         description: 'The JDK version to use (8, 11, 15, ...)'
         required: true
