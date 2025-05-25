@@ -1,13 +1,19 @@
 name: Create Tag
 'on':
   workflow_call:
+    inputs:
+      runner:
+        description: The runner to use for the jobs ("ubuntu-latest", "self-hosted", ...)
+        required: true
+        default: arc-systems
+        type: string
     secrets:
       GITHUB_PAT:
         description: Github Token.
         required: false
 jobs:
   format-semantic-version:
-    runs-on: arc-systems
+    runs-on: ${{ inputs.runner }}
     steps:
       - uses: actions/checkout@v3
         with:
@@ -29,7 +35,7 @@ jobs:
   create-tag:
     needs:
       - format-semantic-version
-    runs-on: arc-systems
+    runs-on: ${{ inputs.runner }}
     steps:
       - uses: actions/checkout@v3
         with:

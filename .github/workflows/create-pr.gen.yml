@@ -1,13 +1,19 @@
 name: Create Pull Request
 'on':
   workflow_call:
+    inputs:
+      runner:
+        description: The runner to use for the jobs ("ubuntu-latest", "self-hosted", ...)
+        required: true
+        default: arc-systems
+        type: string
     secrets:
       GITHUB_PAT:
         description: Github Token.
         required: false
 jobs:
   create_pr:
-    runs-on: arc-systems
+    runs-on: ${{ inputs.runner }}
     if: ${{ github.ref_type == 'branch' }}
     steps:
       - run: >

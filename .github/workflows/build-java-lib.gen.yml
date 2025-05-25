@@ -2,6 +2,11 @@ name: Deploy Java Library
 'on':
   workflow_call:
     inputs:
+      runner:
+        description: The runner to use for the jobs ("ubuntu-latest", "self-hosted", ...)
+        required: true
+        default: arc-systems
+        type: string
       jdk-version:
         description: The JDK version to use (8, 11, 15, ...)
         required: true
@@ -25,7 +30,7 @@ name: Deploy Java Library
         required: false
 jobs:
   lint-commits:
-    runs-on: arc-systems
+    runs-on: ${{ inputs.runner }}
     steps:
       - name: Lint commits
         uses: actions-ecosystem/action-lint-commits@v1
@@ -74,7 +79,7 @@ jobs:
           exit 1
     if: ${{ github.event_name == 'pull_request' }}
   format-release-version:
-    runs-on: arc-systems
+    runs-on: ${{ inputs.runner }}
     steps:
       - name: Format release version for PR
         if: ${{ github.event_name == 'pull_request' }}
@@ -100,7 +105,7 @@ jobs:
     outputs:
       release_version: ${{ steps.unified.outputs.release_version }}
   build-java-maven:
-    runs-on: arc-systems
+    runs-on: ${{ inputs.runner }}
     steps:
       - uses: actions/checkout@v3
         with:
