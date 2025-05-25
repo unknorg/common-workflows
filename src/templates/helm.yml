@@ -75,5 +75,6 @@ jobs:
       - name: Package and push chart to registry
         run: |
           cd ${{ env.HELM_CHART_ROOT || 'helm' }}
+          repoOwner="${{ github.repository_owner }}"
           helm package ${{ env.HELM_CHART_NAME || 'chart' }}
-          helm push ${{ env.chart_name }}-${{ env.chart_version }}.tgz oci://${{ env.HELM_REGISTRY_URL }}/${{ github.repository_owner }}
+          helm push ${{ env.chart_name }}-${{ env.chart_version }}.tgz oci://${{ env.HELM_REGISTRY_URL }}/${repoOwner@L}
