@@ -18,7 +18,7 @@ jobs:
   # lead to wrong analysis reports.
   # To be fixed when https://github.com/orgs/community/discussions/12835 is implemented.
   sonarqube-scan:
-    runs-on: arc-systems
+    runs-on: ${{ inputs.runner }}
     steps:
       - uses: actions/checkout@v3
         with:
@@ -65,7 +65,7 @@ jobs:
           ${{ env.SONARSCANNER_ADDITIONAL_ARGS || '' }}
 
   sonarqube-report:
-    runs-on: arc-systems
+    runs-on: ${{ inputs.runner }}
     if: github.event_name == 'pull_request'
     steps:
       - name: Set up Java

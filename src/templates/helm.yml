@@ -20,7 +20,7 @@ internals:
 
 jobs:
   push-chart:
-    runs-on: arc-systems
+    runs-on: ${{ inputs.runner }}
     steps: !unzip
       - *pre_helm
       - name: Format chart name

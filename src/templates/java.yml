@@ -95,7 +95,7 @@ internals:
 
 jobs:
   build-java-maven:
-    runs-on: arc-systems
+    runs-on: ${{ inputs.runner }}
     steps: !unzip
       - *pre
       - run: |

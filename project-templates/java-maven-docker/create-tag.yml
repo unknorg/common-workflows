@@ -7,5 +7,7 @@ on:
 jobs:
   common-create-tag:
     uses: unknorg/common-workflows/.github/workflows/create-tag.gen.yml@v0.4.1
+    with:
+      runner: arc-systems
     secrets:
       GITHUB_PAT: ${{ secrets.COMMON_PAT }}

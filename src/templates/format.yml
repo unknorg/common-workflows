@@ -5,7 +5,7 @@
 
 jobs:
   semantic-version:
-    runs-on: arc-systems
+    runs-on: ${{ inputs.runner }}
     steps:
       - uses: actions/checkout@v3
         with:
@@ -27,7 +27,7 @@ jobs:
 
 
   release-version:
-    runs-on: arc-systems
+    runs-on: ${{ inputs.runner }}
     steps:
       - name: Format release version for PR
         if: ${{ github.event_name == 'pull_request' }}

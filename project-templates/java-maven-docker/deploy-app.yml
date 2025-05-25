@@ -16,7 +16,7 @@ jobs:
   # For more information: https://github.com/dependabot/dependabot-core/issues/3253#issuecomment-852541544
 
   prevent-dependabot:
-    runs-on: ubuntu-latest
+    runs-on: arc-systems
     steps:
       - if: ${{ github.actor == 'dependabot[bot]' }}
         run: |
@@ -30,6 +30,7 @@ jobs:
     needs: [ prevent-dependabot ]
     uses: unknorg/common-workflows/.github/workflows/build-java-docker.gen.yml@v0.6.0
     with:
+      runner: arc-systems
       jdk-version: 17
       java-build-tool: maven
       docker-registry: ${{ vars.NEXUS_DOCKER_REGISTRY }}

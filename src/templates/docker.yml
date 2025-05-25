@@ -61,7 +61,7 @@ internals:
 
 jobs:
   build-docker-hub:
-    runs-on: arc-systems
+    runs-on: ${{ inputs.runner }}
     steps: !unzip
       - run: echo "internal_docker_name=${{ env.DOCKER_IMAGE_NAME }}" >> $GITHUB_ENV
       - name: Login to Docker Hub
@@ -72,7 +72,7 @@ jobs:
       - *build_image
     outputs: *job_output
   build-docker-ghcr:
-    runs-on: arc-systems
+    runs-on: ${{ inputs.runner }}
     steps: !unzip
       - run: echo "ghcr.io/${{ github.repository }}:${{ env.DOCKER_IMAGE_TAG }}" | awk '{ print "internal_docker_name="tolower($0) }' >> $GITHUB_ENV
       - name: Login to GitHub Container Registry
@@ -84,7 +84,7 @@ jobs:
       - *build_image
     outputs: *job_output
   build-docker-custom:
-    runs-on: arc-systems
+    runs-on: ${{ inputs.runner }}
     steps: !unzip
       - run: echo "${{ env.DOCKER_REGISTRY }}/${{ github.repository }}:${{ env.DOCKER_IMAGE_TAG }}" | awk '{ print "internal_docker_name="tolower($0) }' >> $GITHUB_ENV
       - name: Login to the Docker Registry
