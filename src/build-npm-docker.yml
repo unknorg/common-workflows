@@ -81,6 +81,25 @@ on:
       HELM_REGISTRY_PASSWORD:
         description: 'The helm registry password'
         required: true
+    outputs:
+      docker-image:
+        description: 'The resulting docker image (without tag)'
+        value: ${{ jobs.build-docker-hub.outputs.docker_image || jobs.build-docker-ghcr.outputs.docker_image || jobs.build-docker-custom.outputs.docker_image }}
+      docker-image-tag:
+        description: 'The resulting docker image tag'
+        value: ${{ jobs.build-docker-hub.outputs.docker_image_tag || jobs.build-docker-ghcr.outputs.docker_image_tag || jobs.build-docker-custom.outputs.docker_image_tag }}
+      helm-chart-repository:
+        description: 'The resulting helm chart repository'
+        value: ${{ jobs.build-helm-custom.outputs.helm_chart_repository }}
+      helm-chart-name:
+        description: 'The resulting helm chart name'
+        value: ${{ jobs.build-helm-custom.outputs.helm_chart_name }}
+      helm-chart-version:
+        description: 'The resulting helm chart version'
+        value: ${{ jobs.build-helm-custom.outputs.helm_chart_version }}
+      release-version:
+        description: 'The resulting release version'
+        value: ${{ jobs.format-release-version.outputs.release_version }}
 
 imports:
   - 'templates/linter.yml'

@@ -50,20 +50,26 @@ internals:
       if: ${{ env.BUILD_ARTIFACT_NAME != '' }}
       run: unzip build.zip
     - name: Build Docker image
-      run: docker build -t ${{ env.internal_docker_name }} .
+      run: docker build -t ${{ env.docker_image_with_tag }} .
     - name: Push Docker image
-      run: docker push ${{ env.internal_docker_name }}
+      run: docker push ${{ env.docker_image_with_tag }}
     - name: Job outputs
       id: outputs
-      run: echo "docker_image=${{ env.internal_docker_name }}" >> $GITHUB_OUTPUT
+      run: |
+        echo "docker_image=${{ env.docker_image }}" >> $GITHUB_OUTPUT
+        echo "docker_image_tag=${{ env.DOCKER_IMAGE_TAG }}" >> $GITHUB_OUTPUT
   - job-outputs: &job_output
       docker_image: ${{ steps.outputs.outputs.docker_image }}
+      docker_image_tag: ${{ steps.outputs.outputs.docker_image_tag }}
 
 jobs:
   build-docker-hub:
     runs-on: ${{ inputs.runner }}
     steps: !unzip
-      - run: echo "internal_docker_name=${{ env.DOCKER_IMAGE_NAME }}" >> $GITHUB_ENV
+      - run: |
+          docker_image="${{ github.repository }}"
+          echo "docker_image=${docker_image@L}" >> $GITHUB_ENV
+          echo "docker_image_with_tag=${docker_image@L}:${{ env.DOCKER_IMAGE_TAG }}" >> $GITHUB_ENV
       - name: Login to Docker Hub
         uses: docker/login-action@v2
         with:
@@ -74,7 +80,10 @@ jobs:
   build-docker-ghcr:
     runs-on: ${{ inputs.runner }}
     steps: !unzip
-      - run: echo "ghcr.io/${{ github.repository }}:${{ env.DOCKER_IMAGE_TAG }}" | awk '{ print "internal_docker_name="tolower($0) }' >> $GITHUB_ENV
+      - run: |
+          docker_image="ghcr.io/${{ github.repository }}"
+          echo "docker_image=${docker_image@L}" >> $GITHUB_ENV
+          echo "docker_image_with_tag=${docker_image@L}:${{ env.DOCKER_IMAGE_TAG }}" >> $GITHUB_ENV
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v2
         with:
@@ -86,7 +95,10 @@ jobs:
   build-docker-custom:
     runs-on: ${{ inputs.runner }}
     steps: !unzip
-      - run: echo "${{ env.DOCKER_REGISTRY }}/${{ github.repository }}:${{ env.DOCKER_IMAGE_TAG }}" | awk '{ print "internal_docker_name="tolower($0) }' >> $GITHUB_ENV
+      - run: |
+          docker_image="${{ env.DOCKER_REGISTRY }}/${{ github.repository }}"
+          echo "docker_image=${docker_image@L}" >> $GITHUB_ENV
+          echo "docker_image_with_tag=${docker_image@L}:${{ env.DOCKER_IMAGE_TAG }}" >> $GITHUB_ENV
       - name: Login to the Docker Registry
         uses: docker/login-action@v2
         with:
