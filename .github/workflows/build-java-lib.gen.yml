@@ -28,6 +28,10 @@ name: Deploy Java Library
       MAVEN_SETTINGS_XML:
         description: A custom definition of ~/.m2/settings.xml
         required: false
+    outputs:
+      release-version:
+        description: The resulting release version
+        value: ${{ jobs.format-release-version.outputs.release_version }}
 jobs:
   lint-commits:
     runs-on: ${{ inputs.runner }}

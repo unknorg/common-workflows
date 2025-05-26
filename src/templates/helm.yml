@@ -73,8 +73,17 @@ jobs:
           update_yaml_field $chartFile ".appVersion" "${{ env.chart_app_version }}"
           [ ! "${{ env.HELM_VALUES_IMAGE }}" ] || update_yaml_field $valuesFile ".image.name" "${{ env.HELM_VALUES_IMAGE }}"
       - name: Package and push chart to registry
+        id: package-push
         run: |
           cd ${{ env.HELM_CHART_ROOT || 'helm' }}
           repoOwner="${{ github.repository_owner }}"
+          chartOci=oci://${{ env.HELM_REGISTRY_URL }}/${repoOwner@L}
           helm package ${{ env.HELM_CHART_NAME || 'chart' }}
-          helm push ${{ env.chart_name }}-${{ env.chart_version }}.tgz oci://${{ env.HELM_REGISTRY_URL }}/${repoOwner@L}
+          helm push ${{ env.chart_name }}-${{ env.chart_version }}.tgz $chartOci
+          echo "helm_chart_repository=$chartOci" >> $GITHUB_OUTPUT
+          echo "helm_chart_name=${{ env.chart_name }}" >> $GITHUB_OUTPUT
+          echo "helm_chart_version=${{ env.chart_version }}"  >> $GITHUB_OUTPUT
+    outputs:
+      helm_chart_repository: ${{ steps.package-push.outputs.helm_chart_repository }}
+      helm_chart_name: ${{ steps.package-push.outputs.helm_chart_name }}
+      helm_chart_version: ${{ steps.package-push.outputs.helm_chart_version }}
