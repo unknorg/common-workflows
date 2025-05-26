@@ -106,6 +106,31 @@ name: Dockerized Java Build
       SONARQUBE_TOKEN:
         description: The sonarqube instance token (if sonarqube-url is provided)
         required: false
+    outputs:
+      docker-image:
+        description: The resulting docker image (without tag)
+        value: >-
+          ${{ jobs.build-docker-hub.outputs.docker_image ||
+          jobs.build-docker-ghcr.outputs.docker_image ||
+          jobs.build-docker-custom.outputs.docker_image }}
+      docker-image-tag:
+        description: The resulting docker image tag
+        value: >-
+          ${{ jobs.build-docker-hub.outputs.docker_image_tag ||
+          jobs.build-docker-ghcr.outputs.docker_image_tag ||
+          jobs.build-docker-custom.outputs.docker_image_tag }}
+      helm-chart-repository:
+        description: The resulting helm chart repository
+        value: ${{ jobs.build-helm-custom.outputs.helm_chart_repository }}
+      helm-chart-name:
+        description: The resulting helm chart name
+        value: ${{ jobs.build-helm-custom.outputs.helm_chart_name }}
+      helm-chart-version:
+        description: The resulting helm chart version
+        value: ${{ jobs.build-helm-custom.outputs.helm_chart_version }}
+      release-version:
+        description: The resulting release version
+        value: ${{ jobs.format-release-version.outputs.release_version }}
 jobs:
   lint-commits:
     runs-on: ${{ inputs.runner }}
@@ -310,9 +335,13 @@ jobs:
   build-docker-hub:
     runs-on: ${{ inputs.runner }}
     steps:
-      - run: >-
-          echo "internal_docker_name=${{ env.DOCKER_IMAGE_NAME }}" >>
-          $GITHUB_ENV
+      - run: >
+          docker_image="${{ github.repository }}"
+
+          echo "docker_image=${docker_image@L}" >> $GITHUB_ENV
+
+          echo "docker_image_with_tag=${docker_image@L}:${{ env.DOCKER_IMAGE_TAG
+          }}" >> $GITHUB_ENV
       - name: Login to Docker Hub
         uses: docker/login-action@v2
         with:
@@ -359,14 +388,17 @@ jobs:
         if: ${{ env.BUILD_ARTIFACT_NAME != '' }}
         run: unzip build.zip
       - name: Build Docker image
-        run: docker build -t ${{ env.internal_docker_name }} .
+        run: docker build -t ${{ env.docker_image_with_tag }} .
       - name: Push Docker image
-        run: docker push ${{ env.internal_docker_name }}
+        run: docker push ${{ env.docker_image_with_tag }}
       - name: Job outputs
         id: outputs
-        run: echo "docker_image=${{ env.internal_docker_name }}" >> $GITHUB_OUTPUT
+        run: |
+          echo "docker_image=${{ env.docker_image }}" >> $GITHUB_OUTPUT
+          echo "docker_image_tag=${{ env.DOCKER_IMAGE_TAG }}" >> $GITHUB_OUTPUT
     outputs:
       docker_image: ${{ steps.outputs.outputs.docker_image }}
+      docker_image_tag: ${{ steps.outputs.outputs.docker_image_tag }}
     needs:
       - format-release-version
       - mvn-build-java
@@ -383,9 +415,13 @@ jobs:
   build-docker-ghcr:
     runs-on: ${{ inputs.runner }}
     steps:
-      - run: >-
-          echo "ghcr.io/${{ github.repository }}:${{ env.DOCKER_IMAGE_TAG }}" |
-          awk '{ print "internal_docker_name="tolower($0) }' >> $GITHUB_ENV
+      - run: >
+          docker_image="ghcr.io/${{ github.repository }}"
+
+          echo "docker_image=${docker_image@L}" >> $GITHUB_ENV
+
+          echo "docker_image_with_tag=${docker_image@L}:${{ env.DOCKER_IMAGE_TAG
+          }}" >> $GITHUB_ENV
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v2
         with:
@@ -433,14 +469,17 @@ jobs:
         if: ${{ env.BUILD_ARTIFACT_NAME != '' }}
         run: unzip build.zip
       - name: Build Docker image
-        run: docker build -t ${{ env.internal_docker_name }} .
+        run: docker build -t ${{ env.docker_image_with_tag }} .
       - name: Push Docker image
-        run: docker push ${{ env.internal_docker_name }}
+        run: docker push ${{ env.docker_image_with_tag }}
       - name: Job outputs
         id: outputs
-        run: echo "docker_image=${{ env.internal_docker_name }}" >> $GITHUB_OUTPUT
+        run: |
+          echo "docker_image=${{ env.docker_image }}" >> $GITHUB_OUTPUT
+          echo "docker_image_tag=${{ env.DOCKER_IMAGE_TAG }}" >> $GITHUB_OUTPUT
     outputs:
       docker_image: ${{ steps.outputs.outputs.docker_image }}
+      docker_image_tag: ${{ steps.outputs.outputs.docker_image_tag }}
     needs:
       - format-release-version
       - mvn-build-java
@@ -457,10 +496,13 @@ jobs:
   build-docker-custom:
     runs-on: ${{ inputs.runner }}
     steps:
-      - run: >-
-          echo "${{ env.DOCKER_REGISTRY }}/${{ github.repository }}:${{
-          env.DOCKER_IMAGE_TAG }}" | awk '{ print
-          "internal_docker_name="tolower($0) }' >> $GITHUB_ENV
+      - run: >
+          docker_image="${{ env.DOCKER_REGISTRY }}/${{ github.repository }}"
+
+          echo "docker_image=${docker_image@L}" >> $GITHUB_ENV
+
+          echo "docker_image_with_tag=${docker_image@L}:${{ env.DOCKER_IMAGE_TAG
+          }}" >> $GITHUB_ENV
       - name: Login to the Docker Registry
         uses: docker/login-action@v2
         with:
@@ -508,14 +550,17 @@ jobs:
         if: ${{ env.BUILD_ARTIFACT_NAME != '' }}
         run: unzip build.zip
       - name: Build Docker image
-        run: docker build -t ${{ env.internal_docker_name }} .
+        run: docker build -t ${{ env.docker_image_with_tag }} .
       - name: Push Docker image
-        run: docker push ${{ env.internal_docker_name }}
+        run: docker push ${{ env.docker_image_with_tag }}
       - name: Job outputs
         id: outputs
-        run: echo "docker_image=${{ env.internal_docker_name }}" >> $GITHUB_OUTPUT
+        run: |
+          echo "docker_image=${{ env.docker_image }}" >> $GITHUB_OUTPUT
+          echo "docker_image_tag=${{ env.DOCKER_IMAGE_TAG }}" >> $GITHUB_OUTPUT
     outputs:
       docker_image: ${{ steps.outputs.outputs.docker_image }}
+      docker_image_tag: ${{ steps.outputs.outputs.docker_image_tag }}
     needs:
       - format-release-version
       - mvn-build-java
@@ -603,15 +648,20 @@ jobs:
           [ ! "${{ env.HELM_VALUES_IMAGE }}" ] || update_yaml_field $valuesFile
           ".image.name" "${{ env.HELM_VALUES_IMAGE }}"
       - name: Package and push chart to registry
-        run: >
+        id: package-push
+        run: |
           cd ${{ env.HELM_CHART_ROOT || 'helm' }}
-
           repoOwner="${{ github.repository_owner }}"
-
+          chartOci=oci://${{ env.HELM_REGISTRY_URL }}/${repoOwner@L}
           helm package ${{ env.HELM_CHART_NAME || 'chart' }}
-
-          helm push ${{ env.chart_name }}-${{ env.chart_version }}.tgz oci://${{
-          env.HELM_REGISTRY_URL }}/${repoOwner@L}
+          helm push ${{ env.chart_name }}-${{ env.chart_version }}.tgz $chartOci
+          echo "helm_chart_repository=$chartOci" >> $GITHUB_OUTPUT
+          echo "helm_chart_name=${{ env.chart_name }}" >> $GITHUB_OUTPUT
+          echo "helm_chart_version=${{ env.chart_version }}"  >> $GITHUB_OUTPUT
+    outputs:
+      helm_chart_repository: ${{ steps.package-push.outputs.helm_chart_repository }}
+      helm_chart_name: ${{ steps.package-push.outputs.helm_chart_name }}
+      helm_chart_version: ${{ steps.package-push.outputs.helm_chart_version }}
     needs:
       - format-release-version
       - build-docker-custom
