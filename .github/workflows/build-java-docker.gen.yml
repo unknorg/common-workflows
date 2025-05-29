@@ -197,7 +197,8 @@ jobs:
             echo "::error::Branch name does not respect regex [a-z0-9_\\.\\-]"
             exit 1
           fi
-          echo "version=$head_ref" >> $GITHUB_ENV
+          commitSHA=${{ github.sha }}
+          echo "version=$head_ref-${commitSHA::8}" >> $GITHUB_ENV
       - name: Format release version for release
         if: ${{ github.event_name != 'pull_request' }}
         id: release
@@ -593,9 +594,8 @@ jobs:
       - name: Format chart versions
         run: |
           if [[ "${{ github.event_name }}" = "pull_request" ]]; then
-            commitSHA=${{ github.sha }}
-            echo "chart_version=0.0.0-${{ env.HELM_CHART_VERSION }}-${commitSHA::8}" >> $GITHUB_ENV
-            echo "chart_app_version=${{ env.HELM_CHART_VERSION }}-${commitSHA::8}" >> $GITHUB_ENV
+            echo "chart_version=0.0.0-${{ env.HELM_CHART_VERSION }}" >> $GITHUB_ENV
+            echo "chart_app_version=${{ env.HELM_CHART_VERSION }}" >> $GITHUB_ENV
           else
             semverRegex="^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(\\-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"
             (echo "${{ env.HELM_CHART_VERSION }}" | grep -Eq $semverRegex) \
@@ -646,7 +646,7 @@ jobs:
           }}"
 
           [ ! "${{ env.HELM_VALUES_IMAGE }}" ] || update_yaml_field $valuesFile
-          ".image.name" "${{ env.HELM_VALUES_IMAGE }}"
+          ".image.repository" "${{ env.HELM_VALUES_IMAGE }}"
       - name: Package and push chart to registry
         id: package-push
         run: |
