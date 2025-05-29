@@ -42,7 +42,8 @@ jobs:
             echo "::error::Branch name does not respect regex [a-z0-9_\\.\\-]"
             exit 1
           fi
-          echo "version=$head_ref" >> $GITHUB_ENV
+          commitSHA=${{ github.sha }}
+          echo "version=$head_ref-${commitSHA::8}" >> $GITHUB_ENV
       - name: Format release version for release
         if: ${{ github.event_name != 'pull_request' }}
         id: release
